@@ -1,6 +1,7 @@
 import type {
   ActionResult,
   AnalysisOverview,
+  GameAnalysis,
   GameState,
   RunSummary,
   RunTrace,
@@ -33,14 +34,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ type, payload }),
     }),
-  newGame: (n_players: number, seed?: number | null) =>
+  newGame: (n_players: number, seed?: number | null, agent_seats: number[] = []) =>
     request<GameState>("/api/games", {
       method: "POST",
-      body: JSON.stringify({ n_players, seed: seed ?? null }),
+      body: JSON.stringify({ n_players, seed: seed ?? null, agent_seats }),
+    }),
+  agentStep: () =>
+    request<ActionResult>("/api/agent-step", {
+      method: "POST",
     }),
   runs: () => request<RunSummary[]>("/api/runs"),
   run: (id: string) => request<RunSummary>(`/api/runs/${id}`),
   trace: (id: string) => request<RunTrace>(`/api/runs/${id}/trace`),
+  promoteRun: (id: string) =>
+    request<RunSummary>(`/api/runs/${id}/promote`, { method: "POST" }),
+  promotedGames: () => request<RunSummary[]>("/api/analysis/games"),
+  gameAnalysis: (id: string) =>
+    request<GameAnalysis>(`/api/analysis/games/${id}`),
   startRun: (opts: {
     n_players: number;
     seed?: number | null;

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
-import type { ActionResult, Anim, GameState } from "./types";
+import type { ActionResult, Anim, GameSetup, GameState } from "./types";
 
 export function useGame() {
   const [state, setState] = useState<GameState | null>(null);
@@ -35,17 +35,17 @@ export function useGame() {
     };
   }, [notify]);
 
-  const act = useCallback(
+  const perform = useCallback(
     async (
-      type: string,
-      payload: Record<string, unknown> = {},
+      request: Promise<ActionResult>,
+      fallback: string,
     ): Promise<ActionResult | null> => {
       setBusy(true);
       try {
-        const res = await api.action(type, payload);
+        const res = await request;
         setState(res.state);
         setAnim(res.anim ?? null);
-        if (!res.ok) notify(res.error ?? "Illegal action");
+        if (!res.ok) notify(res.error ?? fallback);
         return res;
       } catch (e) {
         notify((e as Error).message);
@@ -57,27 +57,32 @@ export function useGame() {
     [notify],
   );
 
-  const startNewGame = useCallback(
-    async (n: number) => {
-      setBusy(true);
-      try {
-        const res = await api.action("new_game", { n_players: n });
-        setState(res.state);
-        setAnim(null);
-        if (!res.ok) {
-          notify(res.error ?? "Could not start a new game");
-          return false;
-        }
-        return true;
-      } catch (e) {
-        notify((e as Error).message);
-        return false;
-      } finally {
-        setBusy(false);
-      }
-    },
-    [notify],
+  const act = useCallback(
+    (type: string, payload: Record<string, unknown> = {}) =>
+      perform(api.action(type, payload), "Illegal action"),
+    [perform],
   );
 
-  return { state, busy, loading, notice, notify, act, startNewGame, anim };
+  const stepAgent = useCallback(
+    () => perform(api.agentStep(), "Agent action failed"),
+    [perform],
+  );
+
+  const startNewGame = useCallback(
+    async (setup: GameSetup) => {
+      const res = await perform(
+        api.action("new_game", {
+          n_players: setup.n_players,
+          agent_seats: setup.agent_seats,
+        }),
+        "Could not start a new game",
+      );
+      return res?.ok ?? false;
+    },
+    [perform],
+  );
+
+  return {
+    state, busy, loading, notice, notify, act, stepAgent, startNewGame, anim,
+  };
 }

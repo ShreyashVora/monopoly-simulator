@@ -52,6 +52,7 @@ function cornerContent(s: Square) {
 interface BoardProps {
   state: GameState;
   onRoll?: () => void;
+  onEndTurn?: () => void;
   busy?: boolean;
   replay?: boolean;
   onSelect?: (idx: number) => void;
@@ -63,6 +64,7 @@ interface BoardProps {
 export function Board({
   state,
   onRoll,
+  onEndTurn,
   busy,
   replay,
   onSelect,
@@ -141,6 +143,20 @@ export function Board({
             disabled={busy || state.phase !== "await_roll" || !!state.pending}
           >
             {replay ? "Replay" : "Roll Dice"}
+          </button>
+        )}
+        {onEndTurn && (
+          <button
+            className="roll-btn end-turn-btn"
+            onClick={onEndTurn}
+            disabled={
+              busy ||
+              state.winner !== null ||
+              state.phase !== "await_manage" ||
+              !!state.pending
+            }
+          >
+            End Turn
           </button>
         )}
       </div>

@@ -50,6 +50,30 @@ describe("Board", () => {
     expect(onSelect).toHaveBeenCalledWith(1);
   });
 
+  it("offers End Turn below Roll Dice when management is allowed", async () => {
+    const onEndTurn = vi.fn();
+    const user = userEvent.setup();
+    const s = structuredClone(base);
+    s.phase = "await_manage";
+    const { rerender } = render(
+      <Board state={base} onRoll={vi.fn()} onEndTurn={onEndTurn} />,
+    );
+
+    const roll = screen.getByRole("button", { name: "Roll Dice" });
+    const disabledEndTurn = screen.getByRole("button", { name: "End Turn" });
+    expect(disabledEndTurn).toBeDisabled();
+    expect(
+      roll.compareDocumentPosition(disabledEndTurn) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    rerender(<Board state={s} onRoll={vi.fn()} onEndTurn={onEndTurn} />);
+    const endTurn = screen.getByRole("button", { name: "End Turn" });
+    expect(endTurn).not.toBeDisabled();
+    await user.click(endTurn);
+    expect(onEndTurn).toHaveBeenCalledOnce();
+  });
+
   it("shows an extra-roll reminder after doubles", () => {
     const s = { ...structuredClone(base), doubles: 1 };
     render(<Board state={s} />);

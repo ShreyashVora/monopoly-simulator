@@ -7,6 +7,11 @@ import { RunsPage } from "./pages/RunsPage";
 const AnalysisPage = lazy(() =>
   import("./pages/AnalysisPage").then((m) => ({ default: m.AnalysisPage })),
 );
+const GameAnalysisPage = lazy(() =>
+  import("./pages/GameAnalysisPage").then((m) => ({
+    default: m.GameAnalysisPage,
+  })),
+);
 
 export function App() {
   return (
@@ -22,7 +27,7 @@ export function App() {
         </nav>
         <div className="spacer" />
         <div className="round">
-          hot-seat {"\u00b7"} {"2\u20136 players"}
+          hot-seat or agents {"\u00b7"} {"2\u20136 players"}
         </div>
       </header>
       <main className="page">
@@ -36,6 +41,14 @@ export function App() {
             element={
               <Suspense fallback={<div className="loading">Loading analysis…</div>}>
                 <AnalysisPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/analysis/:runId"
+            element={
+              <Suspense fallback={<div className="loading">Loading analysis…</div>}>
+                <GameAnalysisPage />
               </Suspense>
             }
           />

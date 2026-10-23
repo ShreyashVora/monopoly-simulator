@@ -1,6 +1,6 @@
 # Monopoly Simulator
 
-A 2–6 player hot-seat Monopoly game with a complete rules engine, a React board UI, replayable manual and agent runs, and Markov-chain analysis.
+A 2–6 player hot-seat and human-vs-random-agent Monopoly game with a complete rules engine, a React board UI, replayable manual/mixed/agent runs, and durable per-game dashboards for promoted games.
 
 The Python engine is dependency-free apart from numpy in the analysis module. FastAPI exposes the engine, React 19 + TypeScript + Vite provides the UI, ECharts renders the analysis views, and Vitest covers the frontend.
 
@@ -13,7 +13,7 @@ npm --prefix web run build
 python src/server.py
 ```
 
-Open http://127.0.0.1:8000. Pick 2–6 players, then click **Roll Dice**, resolve the buy popup or the Jail/debt controls in the sidebar, manage properties, and **End Turn**.
+Open http://127.0.0.1:8000. Choose **Hot-seat** or **Humans + agents**, pick 2–6 players, then click **Roll Dice**, resolve the buy popup or the Jail/debt controls in the sidebar, manage properties, then click **End Turn** below **Roll Dice**. In mixed games, random-agent seats move automatically.
 
 ### Development
 
@@ -29,8 +29,8 @@ Vite runs at http://localhost:5173 and proxies `/api` to `127.0.0.1:8000`. The p
 ## Test
 
 ```bash
-python -m pytest             # 79 tests: rules, player counts, fuzz, API, runs, analysis
-npm --prefix web test        # 18 Vitest tests: board/deeds, management, debt/jail, setup, winner
+python -m pytest             # 100 tests: rules, player counts, fuzz, API, mixed agents, runs, promotion, analysis
+npm --prefix web test        # 29 Vitest tests: board/deeds, management, debt/jail, setup, mixed agents, winner, promotion, dashboards
 npm --prefix web run build   # TypeScript project build + production bundle
 ```
 
@@ -38,14 +38,16 @@ Install dev dependencies first with `python -m pip install -r requirements-dev.t
 
 ## Features
 
-- **2–6 players** with a count picker on a fresh game and on every New Game. Each player has a unique token and color.
+- **2–6 players** with a setup dialog on a fresh game and on every New Game. Choose all-human hot-seat or a mixed game with one or more random-agent seats; mixed games need at least one human. Each player has a unique token and color.
 - **Token ownership**: owned squares show the owner's token badge and an owner-color outline; houses, hotels, and mortgage markers are always visible.
 - **Full manual play**: roll, doubles, jail, cards, purchase decisions, even building, mortgage/unmortgage, manual debt settlement, bankruptcy, winner.
+- **Mixed play**: remaining seats are random legal-action agents, marked **BOT**; the server applies one agent action at a time and human controls lock during agent decisions.
 - **Title deeds and clear management**: click any property for its rent schedule, see grouped holdings, bank house/hotel stock, and the reason a build, sale, or mortgage is disabled.
 - **Dismissible result**: after a win, stay on the board or browse Runs/Analysis without starting a new game.
-- **Replayable runs**: manual games are traced automatically; replay any run with a timeline and step-by-step decision/state inspector.
-- **Built-in agents**: greedy and random policies play complete seeded games in the background.
-- **Analysis**: dice-only 40-state Markov chain, stationary distribution, 40×40 transition heatmap, expected hitting times.
+- **Promoted games**: finished games can be promoted from the winner dialog or replay page. Promoted games are stored on disk and are the only games shown in Analysis.
+- **Replayable runs**: manual, mixed, and agent games are traced automatically; replay any run with a timeline and step-by-step decision/state inspector.
+- **Built-in agents**: greedy and random policies play complete seeded games in the background, plus a random legal-action agent for mixed seats.
+- **Per-game analysis**: promoted games get a dashboard with final standings, net-worth/cash/property timelines, an observed movement heatmap, a dice-only expected-rolls baseline, dice totals, an action mix, and links back to the replay.
 
 ## Architecture
 
@@ -55,14 +57,14 @@ Install dev dependencies first with `python -m pip install -r requirements-dev.t
 | `src/state.py` | `GameState` + `Player`, 6 tokens/colors, `MIN_PLAYERS`/`MAX_PLAYERS` |
 | `src/cards.py` | 16 Chance + 16 Community Chest cards as declarative effects |
 | `src/rules.py` | `Game` turn state machine, player-count validation, rent, cards, building, mortgage, manual debt, bankruptcy, winner |
-| `src/trace.py` | Thread-safe `Run`/`RunStore`: initial state, per-action state snapshots, summaries, 30-run cap |
+| `src/trace.py` | Thread-safe `Run`/`RunStore`: initial state, per-action state snapshots, summaries, 30-run cap, durable promoted JSON |
 | `src/agents.py` | Greedy/random policies over the same decision interface; synchronous `simulate()` |
-| `src/analysis.py` | Dice transition matrix, stationary distribution, hitting times via numpy linear solves |
-| `src/api.py` | FastAPI app: game actions, runs, trace, SSE events, analysis, SPA + `web/dist` serving |
+| `src/analysis.py` | Per-game dashboard reports plus the legacy dice-only transition matrix, stationary distribution, and hitting times |
+| `src/api.py` | FastAPI app: game actions, mixed-agent steps, runs, trace, SSE events, analysis, SPA + `web/dist` serving |
 | `src/server.py` | Uvicorn entry point (`api:app`, 127.0.0.1:8000) |
 | `web/src` | React 19 SPA: board, setup dialog, play/runs/replay/analysis pages, typed API client |
 | `web/src/components/Board.tsx` | 11×11 CSS-grid board, path animations, dice animation, token layer, owner/house/mortgage markers, deed targets |
-| `tests/` | `conftest.py`, `test_rules.py`, `test_fuzz.py`, `test_api.py` |
+| `tests/` | `conftest.py`, `test_rules.py`, `test_fuzz.py`, `test_api.py`, `test_agents.py`, `test_trace.py`, `test_analysis.py` |
 | `notebooks/` | Reserved for marimo deep-dives (install `marimo` separately) |
 
 ## Turn state machine
@@ -86,29 +88,39 @@ Doubles grant another roll; three consecutive doubles send the player to jail. `
 |----------|---------|
 | `GET /api/state` | Current game state plus active `run_id` |
 | `POST /api/action` | `{"type": <action>, "payload": {...}}` → `{ok, state, events, anim}` |
-| `POST /api/games` | New seeded/unseeded game: `{n_players, seed?}` |
+| `POST /api/games` | New seeded/unseeded game: `{n_players, seed?, agent_seats?}` |
+| `POST /api/agent-step` | Apply one random legal action for the current agent seat |
 | `GET /api/runs` | Run history summaries, newest first |
 | `POST /api/runs` | Run an agent: `{n_players, policy, seed?, max_steps?}` |
 | `GET /api/runs/{id}` | Run summary |
 | `GET /api/runs/{id}/trace` | Initial state + every recorded step |
 | `GET /api/runs/{id}/events` | SSE stream of steps, terminated by `event: done` |
-| `GET /api/analysis/overview` | labels, 40×40 matrix, stationary π, hitting times |
+| `POST /api/runs/{id}/promote` | Permanently promote a completed game for analysis |
+| `GET /api/analysis/games` | Promoted-game summaries, newest first |
+| `GET /api/analysis/games/{id}` | Per-game dashboard report |
+| `GET /api/analysis/overview` | Legacy dice-only Markov data: labels, 40×40 matrix, stationary π, hitting times |
 
-Manual actions include `roll`, `buy`/`skip`, `jail_pay`/`jail_card`/`jail_roll`, `build`/`sell_house`, `mortgage`/`unmortgage`, `pay_debt`/`declare_bankruptcy`, `end_turn`, and `new_game` (payload `{"n_players": 2..6}`).
+Manual actions include `roll`, `buy`/`skip`, `jail_pay`/`jail_card`/`jail_roll`, `build`/`sell_house`, `mortgage`/`unmortgage`, `pay_debt`/`declare_bankruptcy`, `end_turn`, and `new_game` (payload `{"n_players": 2..6, "agent_seats": [...]}`). `agent_seats` holds zero-based agent seat indices and defaults to `[]` for hot-seat.
 
-State is a plain dict (`Game.public_state()`), deep-copied under the engine lock. `anim` reports the moving player's path.
+State is a plain dict (`Game.public_state()`), deep-copied under the engine lock. It also exposes `mode` (`manual`/`mixed`), `agent_seats`, `policy`, and `promoted`. `anim` reports the moving player's path.
 
 ## Runs and agents
 
-Every manual action after the active run is created appends a trace step containing the actor, phase before the action, pending decision, resulting state, events, and animation payload. Starting a new game starts a new manual run while keeping the previous one in history.
+Every manual or mixed action after the active run is created appends a trace step containing the actor, phase before the action, pending decision, resulting state, events, animation payload, and source metadata. Starting a new game starts a new run while keeping the previous one in history.
 
-`POST /api/runs` executes a synchronous policy game and stores it in the same history. The frontend's **Runs** page launches runs and links to a replay view with an action timeline, decision inspector, and compact state inspector. The SSE endpoint is available for live consumers even though agent runs currently finish before the response returns.
+In mixed games, `POST /api/agent-step` applies one randomly chosen legal action for the current agent seat, including non-current debtors. Agent steps are recorded with `{"source": "agent", "policy": "random"}`; human steps in mixed runs use `{"source": "human"}`. Human actions are rejected while an agent owns the current decision.
+
+`POST /api/runs` executes a synchronous all-agent policy game and stores it in the same history. The frontend's **Runs** page launches runs and links to a replay view with an action timeline, decision inspector, and compact state inspector. The SSE endpoint is available for live consumers even though agent runs currently finish before the response returns.
+
+A completed game with a winner can be promoted from the winner dialog or the replay page. Promotion is one-way and persists the full trace under `data/promoted/<run_id>.json`; promoted runs survive restarts and are protected from the 30-run in-memory cap. The active game state and run summaries expose a `promoted` flag.
 
 ## Analysis
 
-`src/analysis.py` builds the dice-only 40×40 transition matrix for two fair dice, redirecting Go To Jail to Jail. It then computes the stationary distribution by power iteration and expected hitting times by solving `(I − Q)h = 1` for each target. Repeated square short names (Chance, Community Chest, taxes) receive an index suffix so API labels remain unique.
+The **Analysis** tab lists promoted games only. Each game opens a dashboard built by `analysis.game_report()` from its stored trace: winner, steps, turns, bankruptcies, final standings, net worth/cash/property timelines, an observed movement heatmap, dice totals, and an action mix. Net worth is cash plus property equity plus building value minus mortgage principal; a mortgaged property contributes `price − mortgage`.
 
-The UI exposes the stationary distribution, the transition heatmap, per-origin hitting times for any target, and a table of the most visited squares. This is the first cut of the roadmap's Markov phases; augmented state spaces (doubles count, jail status) can be layered on without changing the endpoint shape.
+The observed heatmap compares each actor's position before and after every recorded step, so card and Jail relocations are included; row tooltips show counts and each source square's share. The expected-rolls-to-target chart is instead a dice-only board baseline from `/api/analysis/overview`, identical for every promoted game, and includes the Go To Jail redirect.
+
+The `/api/analysis/overview` endpoint computes the dice-only 40×40 Markov chain, stationary distribution, and hitting times. The per-game dashboard reuses its hitting times for the target baseline; the endpoint also remains available for notebooks and API consumers.
 
 ## Rules coverage
 

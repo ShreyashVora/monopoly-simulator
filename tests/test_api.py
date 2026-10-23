@@ -7,8 +7,9 @@ import api
 
 
 @pytest.fixture()
-def client():
-    with TestClient(api.create_app()) as test_client:
+def client(tmp_path):
+    session = api.Session(promoted_dir=tmp_path / "promoted")
+    with TestClient(api.create_app(session)) as test_client:
         yield test_client
 
 
@@ -69,6 +70,59 @@ def test_new_game_rejects_invalid_player_counts(client, n_players):
     body = res.json()
     assert not body["ok"]
     assert "between" in body["error"]
+
+
+def test_new_game_with_agents_and_agent_step(client):
+    body = _post(
+        client,
+        "new_game",
+        {"n_players": 2, "agent_seats": [0]},
+    ).json()
+    assert body["ok"]
+    state = body["state"]
+    assert state["mode"] == "mixed"
+    assert state["policy"] == "random"
+    assert state["agent_seats"] == [0]
+    run_id = state["run_id"]
+
+    step = client.post("/api/agent-step").json()
+    assert step["ok"]
+    assert step["action"] == "roll"
+    assert step["state"]["run_id"] == run_id
+    trace = client.get(f"/api/runs/{run_id}/trace").json()
+    assert trace["kind"] == "mixed"
+    assert trace["agent_seats"] == [0]
+    assert trace["steps"][-1]["meta"] == {
+        "source": "agent", "policy": "random"}
+
+    blocked = _post(client, "roll").json()
+    assert not blocked["ok"]
+    assert "Waiting for the random agent" in blocked["error"]
+
+
+def test_agent_step_requires_a_mixed_game(client):
+    body = client.post("/api/agent-step").json()
+    assert not body["ok"]
+    assert "No agents" in body["error"]
+
+
+def test_new_game_rejects_all_agent_seats(client):
+    body = _post(
+        client,
+        "new_game",
+        {"n_players": 2, "agent_seats": [0, 1]},
+    ).json()
+    assert not body["ok"]
+    assert "at least one human" in body["error"]
+
+
+def test_games_endpoint_accepts_agent_seats(client):
+    res = client.post(
+        "/api/games", json={"n_players": 3, "seed": 4, "agent_seats": [2]})
+    assert res.status_code == 200
+    state = res.json()
+    assert state["agent_seats"] == [2]
+    assert state["mode"] == "mixed"
 
 
 def test_games_endpoint_starts_seeded_game(client):
@@ -235,3 +289,65 @@ def test_analysis_overview_is_consistent(client):
     assert len(data["hittingTimes"]) == 40
     assert all(len(values) == 40 for values in data["hittingTimes"].values())
     assert data["note"]
+
+
+def test_only_completed_games_can_be_promoted(client):
+    run_id = _state(client)["run_id"]
+
+    res = client.post(f"/api/runs/{run_id}/promote")
+    assert res.status_code == 400
+    assert "completed" in res.json()["detail"]
+    assert client.get("/api/analysis/games").json() == []
+    assert client.get(f"/api/analysis/games/{run_id}").status_code == 404
+    assert client.post("/api/runs/missing/promote").status_code == 404
+
+
+def test_promoted_agent_game_persists_and_has_analysis(client, tmp_path):
+    session = client.app.state.session
+    run = session.start_agent(
+        api.RunRequest(n_players=2, seed=5, max_steps=4000)
+    )
+    assert run.winner is not None
+
+    res = client.post(f"/api/runs/{run.id}/promote")
+    assert res.status_code == 200
+    assert res.json()["promoted"] is True
+    assert client.post(f"/api/runs/{run.id}/promote").status_code == 200
+
+    games = client.get("/api/analysis/games").json()
+    assert [game["id"] for game in games] == [run.id]
+
+    trace = client.get(f"/api/runs/{run.id}/trace").json()
+    assert trace["promoted"] is True
+    assert trace["status"] == "done"
+
+    report = client.get(f"/api/analysis/games/{run.id}").json()
+    assert report["run"]["id"] == run.id
+    assert "steps" not in report["run"]
+    assert report["winner"] == run.winner
+    assert report["steps"] == len(run.steps)
+    assert len(report["players"]) == 2
+    assert len(report["timeline"]["net_worth"]) == 2
+    assert len(report["timeline"]["net_worth"][0]) == report["steps"] + 1
+    assert sum(report["actions"].values()) == report["steps"]
+    assert sum(report["rolls"].values()) == (
+        report["actions"].get("roll", 0)
+        + report["actions"].get("jail_roll", 0)
+    )
+    assert "sources" not in report
+    observed = report["observed_transitions"]
+    assert len(observed["labels"]) == 40
+    assert len(observed["counts"]) == 40
+    assert observed["total"] > 0
+    assert sum(sum(row) for row in observed["counts"]) == observed["total"]
+
+    persisted = tmp_path / "promoted" / f"{run.id}.json"
+    assert persisted.exists()
+
+    with TestClient(
+        api.create_app(api.Session(promoted_dir=tmp_path / "promoted"))
+    ) as fresh:
+        saved = fresh.get("/api/analysis/games").json()
+        assert [game["id"] for game in saved] == [run.id]
+        assert fresh.get(f"/api/analysis/games/{run.id}").status_code == 200
+        assert len(fresh.get(f"/api/runs/{run.id}/trace").json()["steps"]) > 0

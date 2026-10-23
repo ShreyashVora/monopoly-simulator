@@ -120,10 +120,18 @@ export function bankHotels(state: GameState): number {
   );
 }
 
-export function managingPid(state: GameState): number {
+export function decisionActor(state: GameState): number {
   if (state.phase === "await_debt" && state.pending?.type === "debt")
     return state.pending.player;
   return state.current;
+}
+
+export function isAgentDecision(state: GameState): boolean {
+  return (state.agent_seats ?? []).includes(decisionActor(state));
+}
+
+export function managingPid(state: GameState): number {
+  return decisionActor(state);
 }
 
 export function propertyGroups(

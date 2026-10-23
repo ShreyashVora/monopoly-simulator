@@ -32,6 +32,58 @@ describe("WinnerOverlay", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("promotes a finished game and can open its analysis", async () => {
+    const onPromote = vi.fn();
+    const onViewAnalysis = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <WinnerOverlay
+        state={finished}
+        open
+        onNewGame={vi.fn()}
+        onStay={vi.fn()}
+        onPromote={onPromote}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Promote for Analysis" }),
+    );
+    expect(onPromote).toHaveBeenCalledOnce();
+
+    rerender(
+      <WinnerOverlay
+        state={finished}
+        open
+        onNewGame={vi.fn()}
+        onStay={vi.fn()}
+        onPromote={onPromote}
+        onViewAnalysis={onViewAnalysis}
+        promoted
+        promotionError="Could not save"
+      />,
+    );
+    expect(screen.getByText("Could not save")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "View Analysis" }));
+    expect(onViewAnalysis).toHaveBeenCalledOnce();
+  });
+
+  it("disables promotion while it is saving", () => {
+    render(
+      <WinnerOverlay
+        state={finished}
+        open
+        onNewGame={vi.fn()}
+        onStay={vi.fn()}
+        onPromote={vi.fn()}
+        promoting
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Promoting…" }),
+    ).toBeDisabled();
+  });
+
   it("offers both new game and stay actions", async () => {
     const onNewGame = vi.fn();
     const onStay = vi.fn();

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { Board } from "../components/Board";
 import { PropertyDeed } from "../components/GamePanels";
@@ -11,21 +11,28 @@ function stateAt(trace: RunTrace, index: number): GameState {
 
 export function RunDetailPage() {
   const { runId = "" } = useParams();
+  const navigate = useNavigate();
   const [trace, setTrace] = useState<RunTrace | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  const [promoted, setPromoted] = useState(false);
+  const [promoting, setPromoting] = useState(false);
+  const [promoteError, setPromoteError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
     setTrace(null);
     setError(null);
+    setPromoted(false);
+    setPromoteError(null);
     api
       .trace(runId)
       .then((t) => {
         if (!alive) return;
         setTrace(t);
+        setPromoted(t.promoted);
         setIndex(t.steps.length);
       })
       .catch((e: Error) => {
@@ -70,6 +77,19 @@ export function RunDetailPage() {
   const max = trace.steps.length;
   const winner =
     trace.winner !== null ? state.players[trace.winner]?.name : null;
+  const promote = async () => {
+    if (trace.winner === null || promoting) return;
+    setPromoting(true);
+    setPromoteError(null);
+    try {
+      await api.promoteRun(trace.id);
+      setPromoted(true);
+    } catch (e) {
+      setPromoteError((e as Error).message);
+    } finally {
+      setPromoting(false);
+    }
+  };
 
   return (
     <>
@@ -78,6 +98,7 @@ export function RunDetailPage() {
         <small>
           {trace.n_players} players {"\u00b7"} {trace.policy ?? "manual"}{" "}
           {"\u00b7"} {max} steps {winner ? ` \u00b7 ${winner} wins` : ""}
+          {promoted ? " \u00b7 promoted" : ""}
         </small>
       </h1>
       <div className="replay-layout">
@@ -157,6 +178,31 @@ export function RunDetailPage() {
             />
           </div>
 
+          {trace.winner !== null && (
+            <div className="panel">
+              <div className="panel-head">
+                <h2>Game Analysis</h2>
+              </div>
+              {promoted ? (
+                <button
+                  className="wide-btn"
+                  onClick={() => navigate(`/analysis/${trace.id}`)}
+                >
+                  View Analysis
+                </button>
+              ) : (
+                <button
+                  className="wide-btn"
+                  disabled={promoting}
+                  onClick={() => void promote()}
+                >
+                  {promoting ? "Promoting…" : "Promote for Analysis"}
+                </button>
+              )}
+              {promoteError && <div className="error-box">{promoteError}</div>}
+            </div>
+          )}
+
           <div className="panel inspector">
             <div className="panel-head">
               <h2>Decision</h2>
@@ -176,7 +222,13 @@ export function RunDetailPage() {
                   <dt>Phase before</dt>
                   <dd>{current.phase_before}</dd>
                   <dt>Policy</dt>
-                  <dd>{String(current.meta.policy ?? trace.policy ?? "manual")}</dd>
+                  <dd>
+                    {current.meta.source === "agent"
+                      ? "random agent"
+                      : trace.kind === "mixed"
+                        ? "human"
+                        : String(current.meta.policy ?? trace.policy ?? "manual")}
+                  </dd>
                 </dl>
                 {current.pending_before && (
                   <>

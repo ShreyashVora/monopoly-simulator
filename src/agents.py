@@ -85,6 +85,81 @@ def next_actions(game, policy="greedy", rng=None):
     return []
 
 
+def _apply_first(game, candidates):
+    """Apply the first accepted candidate, returning action details."""
+    for action, payload in candidates:
+        result = game.act(action, payload)
+        if result["ok"]:
+            return action, payload, result
+    return None
+
+
+def random_agent_action(game, rng=None):
+    """Apply one uniformly chosen legal action for the current decision actor.
+
+    Pending purchase/jail decisions use the engine's declared options. Manage
+    and debt phases enumerate candidate property actions, shuffle them, and
+    apply the first action the engine accepts. Debt resolution pays when
+    possible, otherwise raises cash before declaring bankruptcy.
+    """
+    rng = rng or random.Random()
+    if game.s.winner is not None or game.s.phase == "game_over":
+        return None
+
+    phase = game.s.phase
+    if phase in ("await_buy", "await_jail"):
+        pend = game.s.pending
+        if not pend:
+            return None
+        candidates = [(o["action"], o.get("payload") or {})
+                      for o in pend["options"]]
+        rng.shuffle(candidates)
+        return _apply_first(game, candidates)
+
+    if phase == "await_roll":
+        return _apply_first(game, [("roll", {})])
+
+    pid = game.decision_actor()
+    owned = [i for i in range(40) if game.s.owner[i] == pid]
+
+    if phase == "await_manage":
+        candidates = []
+        for idx in owned:
+            sq = SQUARES[idx]
+            if sq["type"] == "street":
+                candidates.append(("build", {"idx": idx}))
+                candidates.append(("sell_house", {"idx": idx}))
+            if sq["type"] in ("street", "railroad", "utility"):
+                candidates.append(("mortgage", {"idx": idx}))
+                candidates.append(("unmortgage", {"idx": idx}))
+        candidates.append(("end_turn", {}))
+        rng.shuffle(candidates)
+        return _apply_first(game, candidates)
+
+    if phase == "await_debt":
+        pend = game.s.pending
+        if not pend:
+            return None
+        p = game.s.players[pid]
+        if p.cash >= pend["amount"]:
+            return _apply_first(game, [("pay_debt", {})])
+        candidates = []
+        for idx in owned:
+            sq = SQUARES[idx]
+            if sq["type"] == "street" and game.s.houses[idx] > 0:
+                candidates.append(("sell_house", {"idx": idx}))
+            if (sq["type"] in ("street", "railroad", "utility")
+                    and not game.s.mortgaged[idx]):
+                candidates.append(("mortgage", {"idx": idx}))
+        rng.shuffle(candidates)
+        result = _apply_first(game, candidates)
+        if result:
+            return result
+        return _apply_first(game, [("declare_bankruptcy", {})])
+
+    return None
+
+
 def simulate(seed, n_players, policy="greedy", max_steps=4000, run_id=None):
     """Play a complete game with a built-in policy and return a Run trace."""
     rng = random.Random(seed)

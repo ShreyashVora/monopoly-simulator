@@ -2,6 +2,7 @@ import {
   bankHotels,
   bankHouses,
   buildReason,
+  decisionActor,
   FILL,
   groupLabel,
   managingPid,
@@ -16,25 +17,33 @@ import type { GameState, Square } from "../types";
 export function PlayerCards({ state }: { state: GameState }) {
   return (
     <div className="players-grid">
-      {state.players.map((p, i) => (
-        <div
-          key={p.pid}
-          className={`pcard${i === state.current && state.winner === null ? " current" : ""}${
-            p.bankrupt ? " bankrupt" : ""
-          }`}
-          style={{ borderColor: p.color }}
-        >
-          <div className="pname">
-            {p.glyph} {p.name}
+      {state.players.map((p, i) => {
+        const agent = (state.agent_seats ?? []).includes(p.pid);
+        return (
+          <div
+            key={p.pid}
+            className={`pcard${i === state.current && state.winner === null ? " current" : ""}${
+              p.bankrupt ? " bankrupt" : ""
+            }`}
+            style={{ borderColor: p.color }}
+          >
+            <div className="pname">
+              <span>
+                {p.glyph} {p.name}
+              </span>
+              {agent && <span className="agent-badge">BOT</span>}
+            </div>
+            <div className="cash">${p.cash}</div>
+            <div className="pos">
+              {state.squares[p.pos].short}
+              {p.in_jail ? " \u{1F527}" : ""}
+            </div>
+            {p.goojf > 0 && (
+              <div className="badge">{"\u{1F39F}"}×{p.goojf}</div>
+            )}
           </div>
-          <div className="cash">${p.cash}</div>
-          <div className="pos">
-            {state.squares[p.pos].short}
-            {p.in_jail ? " \u{1F527}" : ""}
-          </div>
-          {p.goojf > 0 && <div className="badge">{"\u{1F39F}"}×{p.goojf}</div>}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -293,6 +302,52 @@ export function JailPanel({
   );
 }
 
+export function AgentTurnPanel({
+  state,
+  busy,
+  paused,
+  onRetry,
+}: {
+  state: GameState;
+  busy: boolean;
+  paused: boolean;
+  onRetry: () => void;
+}) {
+  const p = state.players[decisionActor(state)];
+  const pend = state.pending;
+  let detail = "Choosing a move.";
+  if (pend?.type === "debt") detail = `Settling a $${pend.amount ?? 0} debt.`;
+  else if (pend?.type === "buy") detail = "Deciding whether to buy property.";
+  else if (pend?.type === "jail") detail = "Choosing a Jail action.";
+  else if (state.phase === "await_roll") detail = "Rolling the dice.";
+  else if (state.phase === "await_manage") {
+    detail = "Managing property or ending the turn.";
+  }
+  return (
+    <div className="panel action-panel agent-panel">
+      <div className="panel-head">
+        <h2>Random Agent</h2>
+        <span className="agent-badge">BOT</span>
+      </div>
+      <div className="action-prompt">
+        {p.glyph} {p.name} {detail}
+      </div>
+      <div className={`agent-status${paused ? " paused" : ""}`}>
+        {paused
+          ? "Paused after an error."
+          : busy
+            ? "Applying a legal move…"
+            : "Choosing a legal move…"}
+      </div>
+      {paused && (
+        <button className="wide-btn" disabled={busy} onClick={onRetry}>
+          Retry Agent
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function DebtPanel({
   state,
   busy,
@@ -489,11 +544,21 @@ export function WinnerOverlay({
   open,
   onNewGame,
   onStay,
+  onPromote,
+  onViewAnalysis,
+  promoting = false,
+  promoted = false,
+  promotionError = null,
 }: {
   state: GameState;
   open: boolean;
   onNewGame: () => void;
   onStay: () => void;
+  onPromote?: () => void;
+  onViewAnalysis?: () => void;
+  promoting?: boolean;
+  promoted?: boolean;
+  promotionError?: string | null;
 }) {
   if (!open || state.winner === null) return null;
   const p = state.players[state.winner];
@@ -506,6 +571,22 @@ export function WinnerOverlay({
         <p>
           Final cash: ${p.cash} after {state.turn} turns.
         </p>
+        {promoted && onViewAnalysis ? (
+          <button className="optbtn" onClick={onViewAnalysis}>
+            View Analysis
+          </button>
+        ) : (
+          onPromote && (
+            <button
+              className="optbtn"
+              disabled={promoting}
+              onClick={onPromote}
+            >
+              {promoting ? "Promoting…" : "Promote for Analysis"}
+            </button>
+          )
+        )}
+        {promotionError && <div className="error-box">{promotionError}</div>}
         <button className="optbtn" onClick={onNewGame}>
           New Game
         </button>
