@@ -1,0 +1,12 @@
+{
+  "name": "monopoly-simulator-ui-test",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Optional jsdom UI smoke test for the Monopoly board",
+  "scripts": {
+    "test:ui": "node tests/ui.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1"
+  }
+}

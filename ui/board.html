@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Monopoly — Full Engine UI</title>
+<style>
+  :root { --cell: min(84px, calc((100vh - 92px) / 11), calc((100vw - 400px) / 11));
+          --red: #ed1b24; }
+  * { box-sizing: border-box; }
+  body { background: #4c6ef5; font-family: "Segoe UI", Arial, sans-serif;
+         display: flex; align-items: flex-start; justify-content: center;
+         gap: 16px; margin: 0; padding: 12px; color: #222;
+         height: 100vh; overflow: hidden; }
+  h1 { color: #fff; margin: 0 0 10px; letter-spacing: 1.5px;
+       font-size: clamp(13px, 1.6vh, 18px); white-space: nowrap; }
+  #left { flex: 0 0 auto; }
+  #app { display: flex; gap: 16px; align-items: flex-start; height: 100%; }
+  #board { position: relative; display: grid;
+           grid-template-columns: repeat(11, var(--cell));
+           grid-template-rows: repeat(11, var(--cell));
+           border: 4px solid #111; background: #e8f0d8; }
+  .cell { border: 1px solid #111; background: #f7f4e9; position: relative;
+          overflow: hidden; display: flex; align-items: center;
+          justify-content: center; }
+  .corner { font-weight: 700; text-align: center; padding: 3px; }
+  .corner .name { font-size: clamp(7px, calc(var(--cell) * .13), 11px);
+                  line-height: 1.1; }
+  .corner .sub { font-size: clamp(5px, calc(var(--cell) * .09), 7.5px);
+                 margin-top: 3px; font-weight: 400; }
+  .edge { display: flex; }
+  .edge .bar { display: flex; align-items: center; justify-content: center;
+               font-size: clamp(8px, calc(var(--cell) * .14), 12px);
+               color: #fff; text-shadow: 0 0 2px #0008;
+               font-weight: 600; height: 21%; width: 100%; }
+  .edge .label { flex: 1; display: flex; flex-direction: column;
+                 align-items: center; justify-content: center; gap: 1px;
+                 font-size: clamp(6px, calc(var(--cell) * .1), 8.5px);
+                 text-align: center; line-height: 1.05; padding: 1px; }
+  .edge .label .icon { font-size: clamp(9px, calc(var(--cell) * .18), 15px); }
+  .price { font-size: clamp(5px, calc(var(--cell) * .089), 7.5px); color: #333; }
+  .bottom.edge { flex-direction: column; }
+  .bottom .bar { border-bottom: 1px solid #111; }
+  .top.edge { flex-direction: column; }
+  .top .bar { border-top: 1px solid #111; }
+  .left.edge { flex-direction: row; }
+  .left .bar { width: 21%; height: 100%; border-left: 1px solid #111; }
+  .left .label { writing-mode: vertical-rl; transform: rotate(180deg); }
+  .right.edge { flex-direction: row; }
+  .right .bar { width: 21%; height: 100%; border-right: 1px solid #111; }
+  .right .label { writing-mode: vertical-rl; }
+  .centerbg { background: #e8f0d8; border: none; }
+  .markers { position: absolute; inset: 0; pointer-events: none; }
+  .owner-dot { position: absolute; top: 3px; right: 3px;
+               width: clamp(7px, calc(var(--cell) * .14), 12px);
+               height: clamp(7px, calc(var(--cell) * .14), 12px);
+               border-radius: 50%; border: 1.5px solid #111; }
+  .buildings { position: absolute; bottom: 2px; left: 50%;
+               transform: translateX(-50%);
+               font-size: clamp(6px, calc(var(--cell) * .107), 9px);
+               white-space: nowrap;
+               background: #ffffffd0; border-radius: 3px; padding: 0 2px; }
+  .is-mortgaged .bar { filter: grayscale(1); opacity: .45; }
+  .is-mortgaged .label { opacity: .45; }
+  .mort-tag { position: absolute; top: 3px; left: 3px;
+              font-size: clamp(5px, calc(var(--cell) * .083), 7px);
+              background: #111; color: #fff; padding: 0 3px; border-radius: 2px; }
+  #center { position: absolute; left: var(--cell); top: var(--cell);
+            width: calc(9 * var(--cell)); height: calc(9 * var(--cell));
+            display: flex; flex-direction: column; align-items: center;
+            justify-content: center; gap: 8px; }
+  .logo { font-size: clamp(20px, calc(var(--cell) * .5), 42px);
+          font-weight: 800; letter-spacing: clamp(1px, calc(var(--cell) * .05), 4px);
+          color: var(--red); -webkit-text-stroke: 1.5px #111;
+          transform: skewX(-14deg); }
+  #centerPrompt { font-size: clamp(10px, calc(var(--cell) * .18), 15px);
+                  font-weight: 700; text-align: center; min-height: 20px; }
+  #dice { font-size: clamp(28px, calc(var(--cell) * .64), 54px);
+          letter-spacing: clamp(4px, calc(var(--cell) * .14), 12px);
+          min-height: clamp(28px, calc(var(--cell) * .72), 60px); }
+  #roll { font-size: clamp(11px, calc(var(--cell) * .21), 18px);
+          padding: clamp(5px, calc(var(--cell) * .12), 10px)
+                   clamp(16px, calc(var(--cell) * .4), 34px);
+          border: 2px solid #111;
+          background: var(--red); color: #fff; font-weight: 700;
+          cursor: pointer; border-radius: 8px; }
+  #roll:disabled { background: #999; cursor: not-allowed; }
+  #side { width: 340px; flex: 0 0 auto; display: flex; flex-direction: column;
+          gap: 10px; max-height: 100%; overflow-y: auto; }
+  .panel { background: #fffdf5; border: 2px solid #111; border-radius: 8px;
+           padding: 10px; }
+  .panel h2 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase;
+              letter-spacing: 1px; color: #555; }
+  #players { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .pcard { border: 2px solid #111; border-radius: 6px; padding: 6px;
+           font-size: 11px; position: relative; }
+  .pcard.current { box-shadow: 0 0 0 3px var(--red); }
+  .pcard.bankrupt { opacity: .4; text-decoration: line-through; }
+  .pcard .pname { font-weight: 700; font-size: 12px; }
+  .pcard .cash { font-weight: 700; font-size: 13px; }
+  .pcard .pos { color: #555; font-size: 10px; }
+  .badge { position: absolute; top: 4px; right: 4px; font-size: 9px;
+           background: #111; color: #fff; border-radius: 3px; padding: 1px 3px; }
+  #manageList { max-height: 250px; overflow-y: auto; display: flex;
+                flex-direction: column; gap: 5px; }
+  .mrow { border: 1px solid #999; border-radius: 5px; padding: 4px 6px;
+          font-size: 10.5px; }
+  .mrow .mtitle { display: flex; justify-content: space-between;
+                  font-weight: 600; margin-bottom: 3px; }
+  .mrow .mstat { color: #666; font-weight: 400; }
+  .mbtns { display: flex; gap: 4px; flex-wrap: wrap; }
+  .mbtn { font-size: 9.5px; border: 1px solid #111; background: #fff;
+          border-radius: 4px; padding: 2px 5px; cursor: pointer; }
+  .mbtn:disabled { opacity: .35; cursor: not-allowed; }
+  .mbtn.build { background: #d8f5d0; }
+  .mbtn.sell { background: #ffe0d6; }
+  .mbtn.mort { background: #e8e8e8; }
+  #endTurn { width: 100%; margin-top: 8px; padding: 7px; font-weight: 700;
+             border: 2px solid #111; border-radius: 6px; cursor: pointer;
+             background: #ffd23f; }
+  #endTurn:disabled { opacity: .4; cursor: not-allowed; }
+  #log { height: 190px; overflow-y: auto; font-size: 11px; }
+  #log div { border-bottom: 1px dashed #ddd; padding: 2px 0; }
+  #modal { position: fixed; inset: 0; background: #0008; display: flex;
+           align-items: center; justify-content: center; z-index: 50; }
+  #modal.hidden, #win.hidden { display: none; }
+  #modalCard, #winCard { background: #fffdf5; border: 3px solid #111;
+           border-radius: 12px; padding: 22px 26px; max-width: 420px;
+           box-shadow: 0 10px 30px #0006; text-align: center; }
+  #modalPlayer { font-size: 13px; color: #555; margin-bottom: 4px; }
+  #modalPrompt { font-size: 17px; font-weight: 700; margin-bottom: 16px; }
+  .optbtn { display: block; width: 100%; margin: 6px 0; padding: 10px;
+            font-size: 14px; font-weight: 600; border: 2px solid #111;
+            border-radius: 7px; cursor: pointer; background: #ffe9a8; }
+  .optbtn:hover { background: #ffd23f; }
+  #winCard h2 { font-size: 26px; margin: 0 0 8px; }
+  #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+           background: #111; color: #fff; padding: 8px 16px; border-radius: 6px;
+           font-size: 13px; opacity: 0; transition: opacity .25s; z-index: 99; }
+  #toast.show { opacity: .95; }
+  .token { position: absolute; font-size: calc(var(--cell) * .27); z-index: 5;
+           transition: left .16s linear, top .16s linear;
+           filter: drop-shadow(1px 2px 1px #0006); }
+  .token-layer { position: absolute; inset: 0; pointer-events: none;
+                 z-index: 4; }
+  #newgame { font-size: 10px; padding: 4px 8px; margin-top: 6px; cursor: pointer;
+             border: 1px solid #111; background: #fff; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="left">
+    <h1>MONOPOLY — full engine (manual 4-player)</h1>
+    <div id="board"></div>
+  </div>
+  <div id="side">
+    <div class="panel">
+      <h2>Players</h2>
+      <div id="players"></div>
+      <button id="newgame">New Game</button>
+    </div>
+    <div class="panel">
+      <h2>Manage — <span id="manageWho"></span></h2>
+      <div id="manageList"></div>
+      <button id="endTurn">End Turn</button>
+    </div>
+    <div class="panel">
+      <h2>Event Log</h2>
+      <div id="log"></div>
+    </div>
+  </div>
+</div>
+
+<div id="modal" class="hidden">
+  <div id="modalCard">
+    <div id="modalPlayer"></div>
+    <div id="modalPrompt"></div>
+    <div id="modalOpts"></div>
+  </div>
+</div>
+
+<div id="win" class="hidden">
+  <div id="winCard">
+    <h2 id="winTitle">Winner</h2>
+    <p id="winSub"></p>
+    <button class="optbtn" onclick="act('new_game')">New Game</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const N = 11;
+const boardEl = document.getElementById("board");
+const tokenLayer = document.createElement("div");
+let state = null, squares = [], busy = false;
+const OFFS = [[-0.2, -0.2], [0.16, -0.2], [-0.2, 0.13], [0.16, 0.13]];
+const FILL = { brown: "#955436", lightblue: "#AAE0FA", pink: "#D93A96",
+  orange: "#F7941D", red: "#ED1B24", yellow: "#FEF200", green: "#1FB25A",
+  darkblue: "#0072BB", railroad: "#2B2B2B", utility: "#CFCFCF" };
+const DICE = ["\u2680", "\u2681", "\u2682", "\u2683", "\u2684", "\u2685"];
+const ICONS = { chest: "\u{1F381}", chance: "\u2753", tax: "\u{1F4B0}" };
+
+function cellMap() {
+  const m = {};
+  for (let c = 1; c <= 11; c++) m[`11,${c}`] = 11 - c;
+  for (let r = 1; r <= 11; r++) m[`${r},1`] = 21 - r;
+  for (let c = 1; c <= 11; c++) m[`1,${c}`] = 19 + c;
+  for (let r = 1; r <= 11; r++) m[`${r},11`] = (29 + r) % 40;
+  return m;
+}
+const idxAt = cellMap();
+
+function orientOf(idx) {
+  if (idx === 0 || (idx > 0 && idx < 10)) return "bottom";
+  if (idx === 10 || (idx > 10 && idx < 20)) return "left";
+  if (idx === 20 || (idx > 20 && idx < 30)) return "top";
+  return "right";
+}
+
+function makeLabel(s, withPrice) {
+  const label = document.createElement("div"); label.className = "label";
+  if (ICONS[s.type]) {
+    const ic = document.createElement("div"); ic.className = "icon";
+    ic.innerHTML = ICONS[s.type]; label.appendChild(ic);
+  }
+  const nm = document.createElement("div"); nm.textContent = s.short;
+  label.appendChild(nm);
+  if (withPrice && s.price) {
+    const pr = document.createElement("div"); pr.className = "price";
+    pr.textContent = "$" + s.price; label.appendChild(pr);
+  }
+  return label;
+}
+
+function edgeContent(s, o) {
+  const d = document.createElement("div");
+  d.className = `cell edge ${o}`;
+  if (s.type === "street" || s.type === "railroad" || s.type === "utility") {
+    const bar = document.createElement("div"); bar.className = "bar";
+    bar.style.background = FILL[s.group];
+    bar.innerHTML = s.type === "railroad" ? "\u{1F682}"
+                  : s.type === "utility" ? "\u{1F4A1}\u26A1" : "";
+    const label = makeLabel(s, true);
+    if (o === "bottom") d.append(bar, label);
+    else if (o === "top") d.append(label, bar);
+    else if (o === "left") d.append(label, bar);
+    else d.append(bar, label);
+  } else {
+    d.className = `cell corner ${o} nonproperty`;
+    d.appendChild(makeLabel(s, true));
+  }
+  return d;
+}
+
+function cornerContent(s) {
+  const d = document.createElement("div");
+  const cfg = {
+    go: ["GO", "\u2190 collect $200 salary as you pass"],
+    jail: ["IN JAIL / JUST VISITING", "\u{1F527} bars stay shut"],
+    free_parking: ["FREE PARKING", "rest stop \u2014 nothing happens"],
+    go_to_jail: ["GO TO JAIL", "\u{1F46E} straight to jail"],
+  }[s.type];
+  const nm = document.createElement("div"); nm.className = "name";
+  nm.innerHTML = cfg[0];
+  const sub = document.createElement("div"); sub.className = "sub";
+  sub.innerHTML = cfg[1];
+  if (s.type === "go") nm.style.color = "#c00";
+  d.append(nm, sub);
+  return d;
+}
+
+function buildCenter() {
+  const wrap = document.createElement("div"); wrap.id = "center";
+  wrap.innerHTML = `<div class="logo">MONOPOLY</div>
+    <div id="centerPrompt"></div><div id="dice"></div>
+    <button id="roll">Roll Dice</button>`;
+  wrap.querySelector("#roll").addEventListener("click", () => act("roll"));
+  return wrap;
+}
+
+function buildBoard() {
+  for (let r = 1; r <= N; r++) {
+    for (let c = 1; c <= N; c++) {
+      const idx = idxAt[`${r},${c}`];
+      if (idx === undefined) {
+        const bg = document.createElement("div");
+        bg.className = "cell centerbg";
+        boardEl.appendChild(bg);
+        continue;
+      }
+      const s = squares[idx];
+      let cell;
+      if (s.type === "go" || s.type === "jail" || s.type === "free_parking"
+          || s.type === "go_to_jail") {
+        cell = document.createElement("div");
+        cell.className = `cell corner ${orientOf(idx)}`;
+        cell.appendChild(cornerContent(s));
+      } else {
+        cell = edgeContent(s, orientOf(idx));
+      }
+      cell.dataset.idx = idx;
+      const mk = document.createElement("div");
+      mk.className = "markers";
+      cell.appendChild(mk);
+      boardEl.appendChild(cell);
+    }
+  }
+  tokenLayer.className = "token-layer";
+  boardEl.appendChild(tokenLayer);
+  boardEl.appendChild(buildCenter());
+}
+
+function boardCell() {
+  return (boardEl.clientWidth || 11 * 84) / N;
+}
+
+function sqXY(idx, pIdx) {
+  const cell = boardCell();
+  for (let r = 1; r <= N; r++) for (let c = 1; c <= N; c++)
+    if (idxAt[`${r},${c}`] === idx) {
+      const [ox, oy] = OFFS[pIdx % 4];
+      return [(c - 0.5) * cell + ox * cell, (r - 0.5) * cell + oy * cell];
+    }
+  return [cell * 5.5, cell * 5.5];
+}
+
+function moveTokenTo(pi, idx, instant) {
+  const t = tokenLayer.querySelector(`.token[data-pi="${pi}"]`);
+  if (!t) return;
+  if (instant) t.style.transition = "none";
+  const [x, y] = sqXY(idx, pi);
+  t.style.left = x + "px"; t.style.top = y + "px";
+  if (instant) { void t.offsetWidth; t.style.transition = ""; }
+}
+
+function renderTokens(s) {
+  if (!tokenLayer.children.length) {
+    s.players.forEach((p, i) => {
+      const t = document.createElement("div"); t.className = "token";
+      t.textContent = p.glyph; t.dataset.pi = i; t.title = p.name;
+      tokenLayer.appendChild(t);
+    });
+  }
+  s.players.forEach((p, i) => moveTokenTo(i, p.pos, true));
+}
+
+function renderMarkers(s) {
+  document.querySelectorAll(".cell[data-idx]").forEach(cell => {
+    const idx = +cell.dataset.idx;
+    const mk = cell.querySelector(".markers");
+    mk.innerHTML = "";
+    cell.classList.toggle("is-mortgaged", !!s.mortgaged[idx]);
+    const o = s.owner[idx];
+    if (o !== null && o !== undefined) {
+      const dot = document.createElement("div"); dot.className = "owner-dot";
+      dot.style.background = s.players[o].color;
+      mk.appendChild(dot);
+    }
+    if (s.houses[idx] > 0) {
+      const b = document.createElement("div"); b.className = "buildings";
+      b.textContent = s.houses[idx] === 5 ? "\u{1F3E8}" : "\u{1F3E0}".repeat(s.houses[idx]);
+      mk.appendChild(b);
+    }
+    if (s.mortgaged[idx]) {
+      const m = document.createElement("div"); m.className = "mort-tag";
+      m.textContent = "M"; mk.appendChild(m);
+    }
+  });
+}
+
+function phaseText(s) {
+  if (s.winner !== null) return "Game over";
+  return { await_roll: "Roll the dice", await_manage: "Manage, then end turn",
+           await_buy: "Buy decision", await_jail: "Jail decision" }[s.phase] || "";
+}
+
+function renderCenter(s) {
+  const cur = s.players[s.current];
+  document.getElementById("centerPrompt").innerHTML =
+    s.winner !== null ? "" :
+    `Turn ${s.turn} \u2014 ${cur.glyph} ${cur.name}<br>` +
+    `<span style="font-weight:400;font-size:12px">${phaseText(s)}</span>`;
+  document.getElementById("dice").textContent = s.dice
+    ? DICE[s.dice[0] - 1] + DICE[s.dice[1] - 1] : "";
+  document.getElementById("roll").disabled =
+    busy || s.phase !== "await_roll" || !!s.pending;
+}
+
+function renderPlayers(s) {
+  const el = document.getElementById("players"); el.innerHTML = "";
+  s.players.forEach((p, i) => {
+    const c = document.createElement("div");
+    c.className = "pcard" + (i === s.current && s.winner === null ? " current" : "")
+      + (p.bankrupt ? " bankrupt" : "");
+    c.style.borderColor = p.color;
+    c.innerHTML =
+      `<div class="pname">${p.glyph} ${p.name}</div>
+       <div class="cash">$${p.cash}</div>
+       <div class="pos">${s.squares[p.pos].short}${p.in_jail ? " \u{1F527}" : ""}</div>
+       ${p.goojf ? `<div class="badge">\u{1F39F}\u00d7${p.goojf}</div>` : ""}`;
+    el.appendChild(c);
+  });
+}
+
+function groupIdxs(idx) {
+  const g = squares[idx].group;
+  return squares.filter(x => x.group === g && x.type === "street").map(x => x.idx);
+}
+
+function canBuild(s, idx) {
+  const pid = s.current, sq = s.squares[idx];
+  if (sq.type !== "street" || s.owner[idx] !== pid) return false;
+  if (!["await_roll", "await_manage"].includes(s.phase) || s.pending) return false;
+  const g = groupIdxs(idx);
+  if (!g.every(i => s.owner[i] === pid)) return false;
+  if (g.some(i => s.mortgaged[i])) return false;
+  const h = s.houses[idx];
+  if (h >= 5 || h !== Math.min(...g.map(i => s.houses[i]))) return false;
+  return s.players[pid].cash >= sq.house_cost;
+}
+
+function canSell(s, idx) {
+  const pid = s.current;
+  if (!["await_roll", "await_manage"].includes(s.phase) || s.pending) return false;
+  if (s.owner[idx] !== pid || s.houses[idx] < 1) return false;
+  const g = groupIdxs(idx);
+  return s.houses[idx] === Math.max(...g.map(i => s.houses[i]));
+}
+
+function canMortgage(s, idx) {
+  if (!["await_roll", "await_manage"].includes(s.phase) || s.pending) return false;
+  if (s.owner[idx] !== s.current || s.mortgaged[idx]) return false;
+  return !groupIdxs(idx).some(i => s.houses[i] > 0);
+}
+
+function unmortgageCost(s, idx) {
+  return Math.ceil(s.squares[idx].mortgage * 1.1);
+}
+
+function renderManage(s) {
+  const list = document.getElementById("manageList");
+  const who = document.getElementById("manageWho");
+  const endBtn = document.getElementById("endTurn");
+  list.innerHTML = "";
+  if (s.winner !== null) {
+    who.textContent = "game over";
+    endBtn.disabled = true;
+    return;
+  }
+  const cur = s.players[s.current];
+  who.textContent = `${cur.glyph} ${cur.name}`;
+  endBtn.disabled = busy || s.phase !== "await_manage" || !!s.pending;
+  if (s.pending) {
+    list.innerHTML = '<div style="font-size:11px;color:#666">Resolve the decision in the popup first.</div>';
+    return;
+  }
+  const owned = s.owner.map((o, i) => o === s.current ? i : -1).filter(i => i >= 0);
+  if (!owned.length) {
+    list.innerHTML = '<div style="font-size:11px;color:#666">No properties yet.</div>';
+  }
+  owned.forEach(idx => {
+    const sq = s.squares[idx];
+    const h = s.houses[idx];
+    const stat = s.mortgaged[idx] ? "MORTGAGED"
+      : h === 5 ? "\u{1F3E8} hotel" : h > 0 ? `${"\u{1F3E0}".repeat(h)} (${h})`
+      : "unimproved";
+    const row = document.createElement("div"); row.className = "mrow";
+    row.innerHTML =
+      `<div class="mtitle"><span>${sq.short}</span><span class="mstat">${stat}</span></div>
+       <div class="mbtns"></div>`;
+    const btns = row.querySelector(".mbtns");
+    const mk = (label, cls, enabled, action) => {
+      const b = document.createElement("button");
+      b.className = "mbtn " + cls; b.textContent = label;
+      b.disabled = busy || !enabled;
+      b.onclick = () => act(action, { idx });
+      btns.appendChild(b);
+    };
+    if (sq.type === "street") {
+      mk(h === 4 ? `Hotel $${sq.house_cost}` : `Build $${sq.house_cost}`,
+         "build", canBuild(s, idx), "build");
+      mk("Sell", "sell", canSell(s, idx), "sell_house");
+    }
+    mk(`Mortgage $${sq.mortgage}`, "mort", canMortgage(s, idx), "mortgage");
+    mk(`Unmortgage $${unmortgageCost(s, idx)}`, "mort",
+       !s.mortgaged[idx] ? false : s.players[s.current].cash >= unmortgageCost(s, idx),
+       "unmortgage");
+    list.appendChild(row);
+  });
+}
+
+function renderLog(s) {
+  const el = document.getElementById("log");
+  el.innerHTML = "";
+  [...s.log].reverse().forEach(line => {
+    const d = document.createElement("div"); d.textContent = line;
+    el.appendChild(d);
+  });
+}
+
+function renderPending(s) {
+  const modal = document.getElementById("modal");
+  if (!s.pending || s.winner !== null) { modal.classList.add("hidden"); return; }
+  const p = s.players[s.pending.player];
+  document.getElementById("modalPlayer").textContent =
+    `${p.glyph} ${p.name} \u2014 $${p.cash}`;
+  document.getElementById("modalPrompt").textContent = s.pending.prompt;
+  const opts = document.getElementById("modalOpts");
+  opts.innerHTML = "";
+  s.pending.options.forEach(o => {
+    const b = document.createElement("button");
+    b.className = "optbtn"; b.textContent = o.label;
+    b.disabled = busy;
+    b.onclick = () => act(o.action, o.payload || {});
+    opts.appendChild(b);
+  });
+  modal.classList.remove("hidden");
+}
+
+function renderWin(s) {
+  const win = document.getElementById("win");
+  if (s.winner === null) { win.classList.add("hidden"); return; }
+  const p = s.players[s.winner];
+  document.getElementById("winTitle").textContent =
+    `${p.glyph} ${p.name} wins!`;
+  document.getElementById("winSub").textContent =
+    `Final cash: $${p.cash} after ${s.turn} turns.`;
+  win.classList.remove("hidden");
+}
+
+function applyState(s) {
+  state = s;
+  renderTokens(s);
+  renderMarkers(s);
+  renderCenter(s);
+  renderPlayers(s);
+  renderManage(s);
+  renderLog(s);
+  renderPending(s);
+  renderWin(s);
+}
+
+async function animate(anim) {
+  for (const step of anim.path) {
+    moveTokenTo(anim.mover, step);
+    await new Promise(r => setTimeout(r, 160));
+  }
+}
+
+async function act(type, payload = {}) {
+  if (busy) return;
+  busy = true;
+  if (state) applyState(state);
+  let res = null;
+  try {
+    res = await (await fetch("/api/action", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type, payload })
+    })).json();
+  } catch (e) {
+    toast("Network error — is the server running?");
+  }
+  busy = false;
+  if (!res) { if (state) applyState(state); return; }
+  if (res.anim && res.anim.path) await animate(res.anim);
+  if (res.state) applyState(res.state);
+  if (!res.ok) toast(res.error || "Illegal action");
+}
+
+let toastTimer = null;
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
+}
+
+document.getElementById("endTurn").addEventListener("click", () => act("end_turn"));
+document.getElementById("newgame").addEventListener("click", () => {
+  if (confirm("Start a new game?")) act("new_game");
+});
+window.addEventListener("resize", () => {
+  if (!state) return;
+  state.players.forEach((p, i) => moveTokenTo(i, p.pos, true));
+});
+
+(async function init() {
+  const s = await (await fetch("/api/state")).json();
+  squares = s.squares;
+  buildBoard();
+  applyState(s);
+})();
+</script>
+</body>
+</html>

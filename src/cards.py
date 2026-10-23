@@ -1,0 +1,78 @@
+"""Chance and Community Chest decks.
+
+Each card: id, text, effect, plus effect-specific args.
+Decks in the engine hold card ids; GOOJF is removed from the deck when drawn
+and returned to the bottom when used.
+"""
+
+CHANCE = [
+    {"id": "ch_go", "text": "Advance to GO. Collect $200.",
+     "effect": "move_to", "pos": 0},
+    {"id": "ch_illinois", "text": "Advance to Illinois Avenue. If you pass GO, collect $200.",
+     "effect": "move_to", "pos": 24},
+    {"id": "ch_stcharles", "text": "Advance to St. Charles Place. If you pass GO, collect $200.",
+     "effect": "move_to", "pos": 11},
+    {"id": "ch_utility", "text": "Advance to the nearest Utility. If unowned you may buy it; if owned, pay 10x the dice.",
+     "effect": "nearest", "what": "utility"},
+    {"id": "ch_rail1", "text": "Advance to the nearest Railroad. If unowned you may buy it; if owned, pay twice the rent.",
+     "effect": "nearest", "what": "railroad"},
+    {"id": "ch_rail2", "text": "Advance to the nearest Railroad. If unowned you may buy it; if owned, pay twice the rent.",
+     "effect": "nearest", "what": "railroad"},
+    {"id": "ch_dividend", "text": "Bank pays you a dividend of $50.",
+     "effect": "money", "amount": 50},
+    {"id": "ch_goojf", "text": "Get Out of Jail Free. Keep this card until needed.",
+     "effect": "goojf", "deck": "chance"},
+    {"id": "ch_back3", "text": "Go back three spaces.",
+     "effect": "back3"},
+    {"id": "ch_jail", "text": "Go directly to Jail. Do not pass GO, do not collect $200.",
+     "effect": "jail"},
+    {"id": "ch_repairs", "text": "Make general repairs: pay $25 per house and $100 per hotel.",
+     "effect": "repairs", "house": 25, "hotel": 100},
+    {"id": "ch_speeding", "text": "Speeding fine. Pay $15.",
+     "effect": "money", "amount": -15},
+    {"id": "ch_reading", "text": "Take a trip to Reading Railroad. If you pass GO, collect $200.",
+     "effect": "move_to", "pos": 5},
+    {"id": "ch_chairman", "text": "You have been elected Chairman of the Board. Pay each player $50.",
+     "effect": "pay_each", "amount": 50},
+    {"id": "ch_loan", "text": "Your building loan matures. Collect $150.",
+     "effect": "money", "amount": 150},
+    {"id": "ch_crossword", "text": "You have won a crossword competition. Collect $100.",
+     "effect": "money", "amount": 100},
+]
+
+CHEST = [
+    {"id": "cc_go", "text": "Advance to GO. Collect $200.",
+     "effect": "move_to", "pos": 0},
+    {"id": "cc_bankerror", "text": "Bank error in your favor. Collect $200.",
+     "effect": "money", "amount": 200},
+    {"id": "cc_doctor", "text": "Doctor's fee. Pay $50.",
+     "effect": "money", "amount": -50},
+    {"id": "cc_stock", "text": "From sale of stock you get $50.",
+     "effect": "money", "amount": 50},
+    {"id": "cc_goojf", "text": "Get Out of Jail Free. Keep this card until needed.",
+     "effect": "goojf", "deck": "chest"},
+    {"id": "cc_jail", "text": "Go directly to Jail. Do not pass GO, do not collect $200.",
+     "effect": "jail"},
+    {"id": "cc_holiday", "text": "Holiday fund matures. Receive $100.",
+     "effect": "money", "amount": 100},
+    {"id": "cc_taxrefund", "text": "Income tax refund. Collect $20.",
+     "effect": "money", "amount": 20},
+    {"id": "cc_birthday", "text": "It is your birthday. Collect $10 from every player.",
+     "effect": "collect_each", "amount": 10},
+    {"id": "cc_life", "text": "Life insurance matures. Collect $100.",
+     "effect": "money", "amount": 100},
+    {"id": "cc_hospital", "text": "Pay hospital fees of $100.",
+     "effect": "money", "amount": -100},
+    {"id": "cc_school", "text": "Pay school fees of $150.",
+     "effect": "money", "amount": -150},
+    {"id": "cc_consult", "text": "Receive $25 consultancy fee.",
+     "effect": "money", "amount": 25},
+    {"id": "cc_repairs", "text": "You are assessed for street repairs: pay $40 per house and $115 per hotel.",
+     "effect": "repairs", "house": 40, "hotel": 115},
+    {"id": "cc_beauty", "text": "You have won second prize in a beauty contest. Collect $10.",
+     "effect": "money", "amount": 10},
+    {"id": "cc_inherit", "text": "You inherit $100.",
+     "effect": "money", "amount": 100},
+]
+
+BY_ID = {c["id"]: c for c in CHANCE + CHEST}
