@@ -30,6 +30,27 @@ def _random_manage(game, rng):
     return candidates
 
 
+def _auction_choices(game, policy, rng):
+    pend = game.s.pending
+    pid = pend["player"]
+    p = game.s.players[pid]
+    unit = pend["unit"]
+    min_bid = pend["min_bid"]
+    cap = min(p.cash, pend["price"])
+    cap = (cap // unit) * unit
+    if cap < min_bid:
+        return [("auction_pass", {})]
+    if policy == "greedy":
+        if pend["high_bid"] is not None and pend["high_bid"] >= pend["price"]:
+            return [("auction_pass", {})]
+        return [("auction_bid", {"amount": min_bid}), ("auction_pass", {})]
+    choices = [("auction_pass", {})]
+    if rng.random() < 0.5:
+        amount = rng.choice(list(range(min_bid, cap + 1, unit)))
+        choices.insert(0, ("auction_bid", {"amount": amount}))
+    return choices
+
+
 def next_actions(game, policy="greedy", rng=None):
     """Return candidate actions for the current decision, best first."""
     rng = rng or random.Random()
@@ -38,6 +59,10 @@ def next_actions(game, policy="greedy", rng=None):
         return []
     if phase == "await_roll":
         return [("roll", {})]
+    if phase == "await_auction":
+        return _auction_choices(game, policy, rng)
+    if phase == "await_trade":
+        return [("trade_accept", {}), ("trade_reject", {})]
     if phase == "await_jail":
         p = game.current_player
         if policy == "greedy":
@@ -107,7 +132,7 @@ def random_agent_action(game, rng=None):
         return None
 
     phase = game.s.phase
-    if phase in ("await_buy", "await_jail"):
+    if phase in ("await_buy", "await_jail", "await_trade"):
         pend = game.s.pending
         if not pend:
             return None
@@ -118,6 +143,9 @@ def random_agent_action(game, rng=None):
 
     if phase == "await_roll":
         return _apply_first(game, [("roll", {})])
+
+    if phase == "await_auction":
+        return _apply_first(game, _auction_choices(game, "random", rng))
 
     pid = game.decision_actor()
     owned = [i for i in range(40) if game.s.owner[i] == pid]

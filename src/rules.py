@@ -1,9 +1,8 @@
-"""Full Monopoly rules engine (auctions and trading intentionally absent).
+"""Monopoly rules engine with auctions and player-to-player trading.
 
 Turn flow is a small state machine. Actions advance the game until a human
 decision is required, then park at `phase == "await_*"` with `pending` set.
-The same decision points will later be driven by agent policies instead of
-the UI.
+The same decision points are also driven by the built-in agent policies.
 """
 
 import math
@@ -49,6 +48,8 @@ class Game:
         self._then = "await_manage"
         self._payments = []
         self._payment_done = None
+        self._bank_auction_queue = []
+        self._bank_auction_resume = None
         self._log(f"New game — {self.n_players} players, $1500 each. "
                   "Player 1 to roll.")
 
@@ -59,9 +60,13 @@ class Game:
 
     def decision_actor(self):
         pend = self.s.pending
-        if (self.s.phase == "await_debt" and pend
-                and pend.get("type") == "debt"):
-            return pend["player"]
+        if pend:
+            if self.s.phase == "await_debt" and pend.get("type") == "debt":
+                return pend["player"]
+            if self.s.phase == "await_auction" and pend.get("type") == "auction":
+                return pend["player"]
+            if self.s.phase == "await_trade" and pend.get("type") == "trade":
+                return pend["recipient"]
         return self.s.current
 
     def _log(self, msg):
@@ -87,6 +92,270 @@ class Game:
 
     def _group_has_mortgage(self, idx):
         return any(self.s.mortgaged[i] for i in self._group_indices(idx))
+
+    # ---------------------------------------------------------------- auctions
+    def _active_order(self, start):
+        n = len(self.s.players)
+        return [(start + k) % n for k in range(n)
+                if not self.s.players[(start + k) % n].bankrupt]
+
+    def _auction_unit(self, idx):
+        return max(1, (SQUARES[idx].get("price") or 0) // 10)
+
+    def _auction_min_bid(self, pend):
+        if pend["high_bid"] is None:
+            return pend["unit"]
+        return pend["high_bid"] + pend["unit"]
+
+    def _auction_max_bid(self, pid, unit):
+        return (self.s.players[pid].cash // unit) * unit
+
+    def _next_auction_pid(self, pend, after):
+        participants = pend["participants"]
+        if after not in participants:
+            return None
+        start = participants.index(after)
+        for k in range(1, len(participants) + 1):
+            pid = participants[(start + k) % len(participants)]
+            if pid not in pend["passed"]:
+                return pid
+        return None
+
+    def _set_auction_turn(self, pend, pid):
+        pend["player"] = pid
+        pend["min_bid"] = self._auction_min_bid(pend)
+        pend["max_bid"] = self._auction_max_bid(pid, pend["unit"])
+        pend["active"] = [p for p in pend["participants"]
+                          if p not in pend["passed"]]
+        p = self.s.players[pid]
+        name = SQUARES[pend["idx"]]["name"]
+        if pend["high_bid"] is None:
+            prompt = (f"{p.name} to bid on {name} — opening bid "
+                      f"${pend['min_bid']} (max ${pend['max_bid']}).")
+        else:
+            high_name = self.s.players[pend["high_bidder"]].name
+            prompt = (f"{p.name} to bid on {name} — high bid "
+                      f"${pend['high_bid']} by {high_name}; minimum "
+                      f"${pend['min_bid']} (max ${pend['max_bid']}).")
+        pend["prompt"] = prompt
+        pend["options"] = [
+            {"action": "auction_bid",
+             "label": f"Bid ${pend['min_bid']} or more", "payload": {}},
+            {"action": "auction_pass", "label": "Pass", "payload": {}},
+        ]
+
+    def _start_auction(self, idx, then=None, bank=False):
+        if self.s.winner is not None:
+            return
+        sq = SQUARES[idx]
+        if self.s.owner[idx] is not None:
+            return
+        price = sq.get("price") or 0
+        if price <= 0:
+            return
+        participants = self._active_order(self.s.current)
+        if not participants:
+            if bank:
+                self._resume_bank_auctions()
+            else:
+                self._restore_phase(then or "await_manage")
+            return
+        unit = self._auction_unit(idx)
+        self.s.pending = {
+            "type": "auction",
+            "idx": idx,
+            "price": price,
+            "unit": unit,
+            "player": participants[0],
+            "participants": participants,
+            "passed": [],
+            "active": list(participants),
+            "high_bid": None,
+            "high_bidder": None,
+            "min_bid": unit,
+            "max_bid": self._auction_max_bid(participants[0], unit),
+            "then": then,
+            "bank": bool(bank),
+            "prompt": "",
+            "options": [],
+        }
+        self.s.phase = "await_auction"
+        self._log(f"{sq['name']} goes to auction — opening bid ${unit}.")
+        self._auction_advance()
+
+    def _auction_advance(self):
+        while True:
+            pend = self.s.pending
+            if not pend or pend.get("type") != "auction":
+                return
+            active = [p for p in pend["participants"]
+                      if p not in pend["passed"]]
+            high = pend["high_bidder"]
+            if high is not None:
+                if not [p for p in active if p != high]:
+                    self._finish_auction(high, pend["high_bid"])
+                    return
+            elif not active:
+                self._finish_auction(None, 0)
+                return
+
+            pid = pend["player"]
+            if pid in pend["passed"]:
+                nxt = self._next_auction_pid(pend, pid)
+                if nxt is None:
+                    continue
+                pid = nxt
+                pend["player"] = pid
+
+            p = self.s.players[pid]
+            min_bid = self._auction_min_bid(pend)
+            max_bid = self._auction_max_bid(pid, pend["unit"])
+            if max_bid < min_bid:
+                pend["passed"].append(pid)
+                self._log(f"{p.name} cannot meet the ${min_bid} minimum "
+                          "and is out of the auction.")
+                pend["active"] = [x for x in pend["participants"]
+                                  if x not in pend["passed"]]
+                nxt = self._next_auction_pid(pend, pid)
+                if nxt is None:
+                    pend["player"] = pid
+                    continue
+                pend["player"] = nxt
+                continue
+
+            self._set_auction_turn(pend, pid)
+            return
+
+    def _finish_auction(self, winner, amount):
+        pend = self.s.pending
+        if not pend or pend.get("type") != "auction":
+            return
+        idx = pend["idx"]
+        name = SQUARES[idx]["name"]
+        bank = bool(pend.get("bank"))
+        then = pend.get("then")
+        if winner is None:
+            self._log(f"No bids for {name} — it stays with the bank.")
+        else:
+            p = self.s.players[winner]
+            p.cash -= amount
+            self.s.owner[idx] = winner
+            self._log(f"{p.name} wins {name} for ${amount}.")
+        self.s.pending = None
+        if bank:
+            self._resume_bank_auctions()
+        else:
+            self._restore_phase(then or "await_manage")
+
+    def _resume_bank_auctions(self):
+        if self.s.winner is not None:
+            self._bank_auction_queue = []
+            self._bank_auction_resume = None
+            return
+        while self._bank_auction_queue:
+            idx = self._bank_auction_queue.pop(0)
+            if self.s.owner[idx] is None:
+                self._start_auction(idx, bank=True)
+                return
+        phase = self._bank_auction_resume or "await_manage"
+        self._bank_auction_resume = None
+        self._restore_phase(phase)
+
+    def _maybe_start_bank_auction(self):
+        if (self.s.winner is not None or not self._bank_auction_queue
+                or self.s.phase not in ("await_roll", "await_manage",
+                                        "await_jail")):
+            return
+        pend = self.s.pending
+        if pend is not None and pend.get("type") != "jail":
+            return
+        while self._bank_auction_queue:
+            idx = self._bank_auction_queue.pop(0)
+            if self.s.owner[idx] is not None:
+                continue
+            self._bank_auction_resume = self.s.phase
+            self._start_auction(idx, bank=True)
+            return
+
+    def _restore_phase(self, phase):
+        self.s.pending = None
+        if phase == "await_jail":
+            self._start_turn()
+        else:
+            self.s.phase = phase
+
+    # ----------------------------------------------------------------- trading
+    def _trade_item_desc(self, terms):
+        parts = []
+        if terms["cash"]:
+            parts.append(f"${terms['cash']}")
+        parts.extend(SQUARES[idx]["name"] for idx in terms["properties"])
+        if terms["goojf"]:
+            cards = terms["goojf"]
+            parts.append(f"{cards} Get Out of Jail Free")
+        return ", ".join(parts) if parts else "nothing"
+
+    def _validate_trade_terms(self, pid, terms, label):
+        if terms is None:
+            terms = {}
+        if not isinstance(terms, dict):
+            raise RuleError(f"Trade {label} must be an object.")
+        cash = terms.get("cash", 0)
+        if isinstance(cash, bool) or not isinstance(cash, int) or cash < 0:
+            raise RuleError(
+                f"Trade {label} cash must be a non-negative whole dollar amount.")
+        properties = terms.get("properties", [])
+        if not isinstance(properties, list):
+            raise RuleError(f"Trade {label} properties must be a list.")
+        seen = set()
+        for idx in properties:
+            if isinstance(idx, bool) or not isinstance(idx, int):
+                raise RuleError("Trade property indices must be integers.")
+            if idx in seen:
+                raise RuleError("A property cannot appear twice in a trade.")
+            seen.add(idx)
+            if not 0 <= idx < 40:
+                raise RuleError("Bad trade property.")
+            sq = SQUARES[idx]
+            if sq["type"] not in ("street", "railroad", "utility"):
+                raise RuleError(f"{sq['name']} cannot be traded.")
+            if self.s.owner[idx] != pid:
+                raise RuleError(
+                    f"{self.s.players[pid].name} does not own {sq['name']}.")
+            if self.s.mortgaged[idx]:
+                raise RuleError(
+                    f"Unmortgage {sq['name']} before trading it.")
+            if any(self.s.houses[i] for i in self._group_indices(idx)):
+                raise RuleError(
+                    f"Sell all buildings in {sq['name']}'s color group "
+                    "before trading it.")
+        goojf = terms.get("goojf", 0)
+        if isinstance(goojf, bool) or not isinstance(goojf, int) or goojf < 0:
+            raise RuleError(
+                f"Trade {label} GOOJF count must be a non-negative integer.")
+        p = self.s.players[pid]
+        if cash > p.cash:
+            raise RuleError(
+                f"{p.name} only has ${p.cash} for the trade.")
+        if goojf > len(p.goojf):
+            raise RuleError(
+                f"{p.name} only has {len(p.goojf)} Get Out of Jail Free card(s).")
+        return {"cash": cash, "properties": list(properties), "goojf": goojf}
+
+    def _exchange_goojf(self, proposer, recipient, give_count, want_count):
+        give_cards = (proposer.goojf[-give_count:]
+                      if give_count else [])
+        want_cards = (recipient.goojf[-want_count:]
+                      if want_count else [])
+        if give_count:
+            del proposer.goojf[-give_count:]
+        if want_count:
+            del recipient.goojf[-want_count:]
+        proposer.goojf.extend(want_cards)
+        recipient.goojf.extend(give_cards)
+
+    def _trade_is_empty(self, terms):
+        return not (terms["cash"] or terms["properties"] or terms["goojf"])
 
     # ------------------------------------------------------------- turn logic
     def _start_turn(self):
@@ -187,12 +456,13 @@ class Game:
                         "options": [
                             {"action": "buy", "label": f"Buy for ${price}",
                              "payload": {}},
-                            {"action": "skip", "label": "Skip (no auction)",
+                            {"action": "skip", "label": "Pass — auction it",
                              "payload": {}},
                         ],
                     }
                 else:
                     self._log(f"{p.name} cannot afford {sq['name']} (${price}).")
+                    self._start_auction(p.pos, then=self._then)
             elif owner == pid:
                 self._log(f"{p.name} owns {sq['name']}.")
             else:
@@ -428,6 +698,7 @@ class Game:
     def _bankrupt(self, pid, creditors=None):
         creditors = list(creditors or [])
         p = self.s.players[pid]
+        banked = []
         self._log(f"{p.name} is bankrupt!")
         if len(creditors) == 1:
             cid = creditors[0][0]
@@ -450,6 +721,7 @@ class Game:
                 self.s.players[creditors[0][0]].goojf.extend(p.goojf)
             for idx in range(40):
                 if self.s.owner[idx] == pid:
+                    banked.append(idx)
                     self.s.owner[idx] = None
                     self.s.mortgaged[idx] = False
                     self.s.houses[idx] = 0
@@ -458,6 +730,11 @@ class Game:
         p.bankrupt = True
         self._stop = True
         self._check_winner()
+        if self.s.winner is not None:
+            self._bank_auction_queue = []
+            self._bank_auction_resume = None
+        else:
+            self._bank_auction_queue.extend(banked)
         if self.s.winner is None and self.s.current == pid:
             self._advance_turn()
 
@@ -607,10 +884,137 @@ class Game:
         pend = self.s.pending
         if not pend or pend["type"] != "buy":
             raise RuleError("Nothing to skip.")
-        self._log(f"{self.s.players[pend['player']].name} skips "
-                  f"{SQUARES[pend['idx']]['name']} (no auction).")
-        self.s.phase = pend["then"]
+        self._log(f"{self.s.players[pend['player']].name} passes on "
+                  f"{SQUARES[pend['idx']]['name']} — auctioning it.")
+        self._start_auction(pend["idx"], then=pend["then"])
+
+    def a_auction_bid(self, payload):
+        pend = self.s.pending
+        if (self.s.phase != "await_auction" or not pend
+                or pend.get("type") != "auction"):
+            raise RuleError("No auction is waiting for a bid.")
+        pid = pend["player"]
+        p = self.s.players[pid]
+        amount = payload.get("amount")
+        if isinstance(amount, bool) or not isinstance(amount, int):
+            raise RuleError("Bid amount must be a whole dollar amount.")
+        unit = pend["unit"]
+        min_bid = self._auction_min_bid(pend)
+        if amount < min_bid:
+            raise RuleError(f"The minimum bid is ${min_bid}.")
+        if amount % unit:
+            raise RuleError(f"Bids must be multiples of ${unit}.")
+        if amount > p.cash:
+            raise RuleError(f"{p.name} only has ${p.cash}.")
+        pend["high_bid"] = amount
+        pend["high_bidder"] = pid
+        self._log(f"{p.name} bids ${amount} for "
+                  f"{SQUARES[pend['idx']]['name']}.")
+        nxt = self._next_auction_pid(pend, pid)
+        if nxt is not None:
+            pend["player"] = nxt
+        self._auction_advance()
+
+    def a_auction_pass(self, payload):
+        pend = self.s.pending
+        if (self.s.phase != "await_auction" or not pend
+                or pend.get("type") != "auction"):
+            raise RuleError("No auction is waiting for a pass.")
+        pid = pend["player"]
+        if pid not in pend["passed"]:
+            pend["passed"].append(pid)
+        self._log(f"{self.s.players[pid].name} passes in the auction for "
+                  f"{SQUARES[pend['idx']]['name']}.")
+        nxt = self._next_auction_pid(pend, pid)
+        if nxt is not None:
+            pend["player"] = nxt
+        self._auction_advance()
+
+    def a_trade_propose(self, payload):
+        if self.s.winner is not None:
+            raise RuleError("The game is over.")
+        if self.s.phase not in ("await_roll", "await_manage", "await_jail"):
+            raise RuleError("Trades are not available right now.")
+        pend = self.s.pending
+        if (pend is not None and not (self.s.phase == "await_jail"
+                                      and pend.get("type") == "jail")):
+            raise RuleError("Resolve the pending decision first.")
+        pid = self.s.current
+        rid = payload.get("recipient")
+        if (isinstance(rid, bool) or not isinstance(rid, int)
+                or not 0 <= rid < len(self.s.players)):
+            raise RuleError("Choose a valid trade recipient.")
+        if rid == pid:
+            raise RuleError("You cannot trade with yourself.")
+        if self.s.players[rid].bankrupt:
+            raise RuleError("That player is bankrupt.")
+        give = self._validate_trade_terms(pid, payload.get("give"), "offer")
+        want = self._validate_trade_terms(rid, payload.get("want"), "request")
+        if self._trade_is_empty(give) and self._trade_is_empty(want):
+            raise RuleError("A trade must include at least one item.")
+        p = self.s.players[pid]
+        r = self.s.players[rid]
+        resume_phase = self.s.phase
+        self.s.phase = "await_trade"
+        self.s.pending = {
+            "type": "trade",
+            "player": pid,
+            "proposer": pid,
+            "recipient": rid,
+            "give": give,
+            "want": want,
+            "resume_phase": resume_phase,
+            "prompt": f"{p.name} proposes a trade to {r.name}.",
+            "options": [
+                {"action": "trade_accept", "label": "Accept trade",
+                 "payload": {}},
+                {"action": "trade_reject", "label": "Reject trade",
+                 "payload": {}},
+            ],
+        }
+        self._log(f"{p.name} offers {r.name}: {self._trade_item_desc(give)} "
+                  f"for {self._trade_item_desc(want)}.")
+
+    def a_trade_accept(self, payload):
+        pend = self.s.pending
+        if (self.s.phase != "await_trade" or not pend
+                or pend.get("type") != "trade"):
+            raise RuleError("No trade offer to accept.")
+        pid = pend["proposer"]
+        rid = pend["recipient"]
+        p = self.s.players[pid]
+        r = self.s.players[rid]
+        give = self._validate_trade_terms(pid, pend["give"], "offer")
+        want = self._validate_trade_terms(rid, pend["want"], "request")
+        p.cash -= give["cash"]
+        r.cash += give["cash"]
+        r.cash -= want["cash"]
+        p.cash += want["cash"]
+        for idx in give["properties"]:
+            self.s.owner[idx] = rid
+        for idx in want["properties"]:
+            self.s.owner[idx] = pid
+        self._exchange_goojf(p, r, give["goojf"], want["goojf"])
+        resume_phase = pend["resume_phase"]
+        self._log(f"{r.name} accepts the trade from {p.name}: "
+                  f"{self._trade_item_desc(give)} for "
+                  f"{self._trade_item_desc(want)}.")
         self.s.pending = None
+        self._restore_phase(resume_phase)
+
+    def a_trade_reject(self, payload):
+        pend = self.s.pending
+        if (self.s.phase != "await_trade" or not pend
+                or pend.get("type") != "trade"):
+            raise RuleError("No trade offer to reject.")
+        pid = pend["proposer"]
+        rid = pend["recipient"]
+        p = self.s.players[pid]
+        r = self.s.players[rid]
+        resume_phase = pend["resume_phase"]
+        self._log(f"{r.name} rejects the trade offer from {p.name}.")
+        self.s.pending = None
+        self._restore_phase(resume_phase)
 
     def a_build(self, payload):
         self._require_property_action(allow_spending=False)
@@ -752,6 +1156,7 @@ class Game:
                 if handler is None:
                     raise RuleError(f"Unknown action: {action_type}")
                 handler(payload or {})
+                self._maybe_start_bank_auction()
             except RuleError as e:
                 return {"ok": False, "error": str(e),
                         "state": self.public_state()}

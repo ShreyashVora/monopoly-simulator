@@ -10,6 +10,12 @@ def act_ok(game, action, payload=None):
     return res
 
 
+def pass_auction(game):
+    """Pass every remaining bidder until the current auction resolves."""
+    while game.s.phase == "await_auction":
+        game.act("auction_pass")
+
+
 def random_policy_step(game):
     """Play one step using a simple buy-everything policy."""
     phase = game.s.phase
@@ -19,6 +25,13 @@ def random_policy_step(game):
         pend = game.s.pending
         affordable = game.s.players[pend["player"]].cash >= pend["price"]
         game.act("buy" if affordable else "skip")
+    elif phase == "await_auction":
+        pend = game.s.pending
+        p = game.s.players[pend["player"]]
+        if pend["high_bid"] is None and p.cash >= pend["min_bid"]:
+            game.act("auction_bid", {"amount": pend["min_bid"]})
+        else:
+            game.act("auction_pass")
     elif phase == "await_jail":
         p = game.current_player
         if p.cash >= 50:

@@ -7,8 +7,8 @@ from board import SQUARES
 from helpers import random_policy_step
 
 PHASES = {
-    "await_roll", "await_buy", "await_jail", "await_debt",
-    "await_manage", "game_over",
+    "await_roll", "await_buy", "await_auction", "await_jail", "await_debt",
+    "await_manage", "await_trade", "game_over",
 }
 
 

@@ -4,7 +4,7 @@ import random
 
 import api
 import rules
-from agents import random_agent_action
+from agents import next_actions, random_agent_action
 
 
 def test_random_agent_uses_pending_purchase_options(game):
@@ -19,7 +19,27 @@ def test_random_agent_uses_pending_purchase_options(game):
     action, _, response = random_agent_action(game, rng)
     assert action in ("buy", "skip")
     assert response["ok"]
+    while game.s.phase == "await_auction":
+        result = random_agent_action(game, rng)
+        assert result is not None
+        assert result[2]["ok"]
     assert game.s.phase == "await_manage"
+
+
+def test_random_agent_bids_or_passes_in_auction():
+    game = rules.Game(seed=1)
+    game.forced_dice = (1, 2)
+    game.act("roll")
+    game.act("skip")
+    assert game.s.phase == "await_auction"
+
+    result = random_agent_action(game, random.Random(7))
+    assert result is not None
+    action, payload, response = result
+    assert response["ok"]
+    assert action in ("auction_bid", "auction_pass")
+    if action == "auction_bid":
+        assert payload["amount"] % 6 == 0
 
 
 def test_random_agent_sells_or_mortgages_for_non_current_debt(game):
@@ -48,6 +68,43 @@ def test_random_agent_declares_when_it_cannot_raise_cash(game):
     assert action == "declare_bankruptcy"
     assert response["ok"]
     assert game.s.players[0].bankrupt
+
+
+def test_random_agent_accepts_or_rejects_trade_offer():
+    session = api.Session()
+    session.new_game(2, seed=5, agent_seats=[1])
+    session.game.s.owner[1] = 0
+    session.game.s.owner[3] = 1
+    result = session.act(
+        "trade_propose",
+        {
+            "recipient": 1,
+            "give": {"cash": 100, "properties": [1], "goojf": 0},
+            "want": {"cash": 0, "properties": [3], "goojf": 0},
+        },
+    )
+    assert result["ok"]
+    assert session.game.decision_actor() == 1
+
+    result = session.agent_step()
+    assert result["ok"]
+    assert result["action"] in ("trade_accept", "trade_reject")
+    assert session.run.steps[-1]["actor"] == 1
+    assert session.game.s.phase == "await_roll"
+    if result["action"] == "trade_accept":
+        assert session.game.s.owner[1] == 1
+        assert session.game.s.owner[3] == 0
+    else:
+        assert session.game.s.owner[1] == 0
+        assert session.game.s.owner[3] == 1
+
+
+def test_random_agent_never_proposes_a_trade(game):
+    for phase in ("await_roll", "await_manage"):
+        game.s.phase = phase
+        game.s.pending = None
+        actions = [action for action, _ in next_actions(game, "random")]
+        assert "trade_propose" not in actions
 
 
 def test_mixed_new_game_exposes_agents_and_run_metadata():
