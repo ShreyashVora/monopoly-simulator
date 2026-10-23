@@ -4,7 +4,7 @@ import pytest
 
 import rules
 from board import SQUARES
-from helpers import act_ok
+from helpers import act_ok, pass_auction
 from state import MAX_PLAYERS, MIN_PLAYERS, PLAYER_COLORS, TOKENS
 
 
@@ -76,10 +76,12 @@ def test_buy_transfers_ownership_and_cash(game):
     assert game.s.pending is None
 
 
-def test_skip_leaves_property_with_bank(game):
+def test_skip_starts_auction_and_no_bids_leave_property_with_bank(game):
     game.forced_dice = (1, 2)
     act_ok(game, "roll")
     act_ok(game, "skip")
+    assert game.s.phase == "await_auction"
+    pass_auction(game)
     assert game.s.owner[3] is None
     assert game.s.phase == "await_manage"
 
@@ -237,6 +239,7 @@ def test_third_double_sends_to_jail_and_ends_turn(game):
         act_ok(game, "roll")
         if game.s.pending:
             act_ok(game, "skip")
+            pass_auction(game)
     game.forced_dice = (2, 2)
     act_ok(game, "roll")
     assert game.s.players[0].in_jail
@@ -307,6 +310,7 @@ def test_jail_roll_doubles_releases_without_extra_roll(game):
     act_ok(game, "jail_roll")
     if game.s.pending:
         act_ok(game, "skip")
+        pass_auction(game)
     assert not p.in_jail
     assert p.pos == 14
     assert game.s.phase == "await_manage"

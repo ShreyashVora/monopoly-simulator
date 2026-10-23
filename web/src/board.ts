@@ -121,8 +121,15 @@ export function bankHotels(state: GameState): number {
 }
 
 export function decisionActor(state: GameState): number {
-  if (state.phase === "await_debt" && state.pending?.type === "debt")
-    return state.pending.player;
+  const pending = state.pending;
+  if (pending) {
+    if (state.phase === "await_debt" && pending.type === "debt")
+      return pending.player;
+    if (state.phase === "await_auction" && pending.type === "auction")
+      return pending.player;
+    if (state.phase === "await_trade" && pending.type === "trade")
+      return pending.recipient ?? state.current;
+  }
   return state.current;
 }
 
@@ -131,6 +138,8 @@ export function isAgentDecision(state: GameState): boolean {
 }
 
 export function managingPid(state: GameState): number {
+  if (state.pending?.type === "trade") return state.current;
+  if (state.pending?.type === "auction") return state.current;
   return decisionActor(state);
 }
 
@@ -258,10 +267,45 @@ export function unmortgageCost(state: GameState, idx: number): number {
   return Math.ceil((state.squares[idx].mortgage ?? 0) * 1.1);
 }
 
+export function tradePropertyReason(
+  state: GameState,
+  idx: number,
+  pid = state.current,
+): string | null {
+  if (state.winner !== null) return "Game over.";
+  const sq = state.squares[idx];
+  if (!["street", "railroad", "utility"].includes(sq.type))
+    return "This cannot be traded.";
+  if (state.owner[idx] !== pid) return "Not your property.";
+  if (state.mortgaged[idx]) return "Unmortgage this deed first.";
+  if (groupIdxs(state, idx).some((i) => state.houses[i] > 0))
+    return `Sell all ${groupLabel(sq.group)} buildings first.`;
+  return null;
+}
+
+export function canTradeProperty(
+  state: GameState,
+  idx: number,
+  pid = state.current,
+): boolean {
+  return tradePropertyReason(state, idx, pid) === null;
+}
+
+const TRADE_PHASES = ["await_roll", "await_manage", "await_jail"];
+
+export function canProposeTrade(state: GameState): boolean {
+  if (state.winner !== null) return false;
+  if (!TRADE_PHASES.includes(state.phase)) return false;
+  if (state.pending !== null && state.pending.type !== "jail") return false;
+  return state.players.some((p) => !p.bankrupt && p.pid !== state.current);
+}
+
 const PHASE_LABELS: Record<string, string> = {
   await_roll: "Roll the dice",
   await_manage: "Manage, then end turn",
   await_buy: "Buy decision",
+  await_auction: "Auction in progress",
+  await_trade: "Trade offer pending",
   await_jail: "Jail decision",
   await_debt: "Raise cash to settle debt",
   game_over: "Game over",
@@ -269,6 +313,14 @@ const PHASE_LABELS: Record<string, string> = {
 
 export function phaseText(state: GameState): string {
   if (state.winner !== null) return "Game over";
+  const pending = state.pending;
+  if (state.phase === "await_auction" && pending?.type === "auction") {
+    return `Auction — ${state.players[pending.player].name} to bid`;
+  }
+  if (state.phase === "await_trade" && pending?.type === "trade") {
+    const recipient = pending.recipient ?? pending.player;
+    return `Trade offer for ${state.players[recipient].name}`;
+  }
   return PHASE_LABELS[state.phase] ?? "";
 }
 

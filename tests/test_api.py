@@ -153,6 +153,8 @@ def test_scripted_play_through_api(client):
                 state["players"][pending["player"]]["cash"] >= pending["price"]
             )
             res = _post(client, "buy" if affordable else "skip")
+        elif phase == "await_auction":
+            res = _post(client, "auction_pass")
         elif phase == "await_jail":
             player = state["players"][state["current"]]
             action = (
@@ -351,3 +353,36 @@ def test_promoted_agent_game_persists_and_has_analysis(client, tmp_path):
         assert [game["id"] for game in saved] == [run.id]
         assert fresh.get(f"/api/analysis/games/{run.id}").status_code == 200
         assert len(fresh.get(f"/api/runs/{run.id}/trace").json()["steps"]) > 0
+
+
+def test_trade_proposal_and_accept_via_api():
+    session = api.Session()
+    with TestClient(api.create_app(session)) as client:
+        session.game.s.owner[1] = 0
+        session.game.s.owner[3] = 1
+        body = _post(
+            client,
+            "trade_propose",
+            {
+                "recipient": 1,
+                "give": {"cash": 100, "properties": [1], "goojf": 0},
+                "want": {"cash": 0, "properties": [3], "goojf": 0},
+            },
+        ).json()
+        assert body["ok"], body.get("error")
+        state = body["state"]
+        assert state["phase"] == "await_trade"
+        assert state["pending"]["type"] == "trade"
+        assert state["pending"]["proposer"] == 0
+        assert state["pending"]["recipient"] == 1
+
+        body = _post(client, "trade_accept").json()
+        assert body["ok"], body.get("error")
+        state = body["state"]
+        assert state["phase"] == "await_roll"
+        assert state["owner"][1] == 1
+        assert state["owner"][3] == 0
+        assert state["players"][0]["cash"] == 1400
+        assert state["players"][1]["cash"] == 1600
+        assert session.run.steps[-1]["action"] == "trade_accept"
+        assert session.run.steps[-1]["pending_before"]["type"] == "trade"

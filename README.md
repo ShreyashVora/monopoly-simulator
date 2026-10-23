@@ -1,6 +1,6 @@
 # Monopoly Simulator
 
-A 2–6 player hot-seat and human-vs-random-agent Monopoly game with a complete rules engine, a React board UI, replayable manual/mixed/agent runs, and durable per-game dashboards for promoted games.
+A 2–6 player hot-seat and human-vs-random-agent Monopoly game with auctions, player trading, a complete rules engine, a React board UI, replayable manual/mixed/agent runs, and durable per-game dashboards for promoted games.
 
 The Python engine is dependency-free apart from numpy in the analysis module. FastAPI exposes the engine, React 19 + TypeScript + Vite provides the UI, ECharts renders the analysis views, and Vitest covers the frontend.
 
@@ -13,7 +13,7 @@ npm --prefix web run build
 python src/server.py
 ```
 
-Open http://127.0.0.1:8000. Choose **Hot-seat** or **Humans + agents**, pick 2–6 players, then click **Roll Dice**, resolve the buy popup or the Jail/debt controls in the sidebar, manage properties, then click **End Turn** below **Roll Dice**. In mixed games, random-agent seats move automatically.
+Open http://127.0.0.1:8000. Choose **Hot-seat** or **Humans + agents**, pick 2–6 players, then click **Roll Dice**, resolve the buy popup, auction, trade, or Jail/debt controls in the sidebar, manage properties, then click **End Turn** below **Roll Dice**. Declining a purchase or being unable to afford one sends the deed to auction. Use **Trade** in the Manage panel to offer cash, deeds, and Get Out of Jail Free cards. In mixed games, random-agent seats move automatically and decide whether to accept or reject offers.
 
 ### Development
 
@@ -29,8 +29,8 @@ Vite runs at http://localhost:5173 and proxies `/api` to `127.0.0.1:8000`. The p
 ## Test
 
 ```bash
-python -m pytest             # 100 tests: rules, player counts, fuzz, API, mixed agents, runs, promotion, analysis
-npm --prefix web test        # 29 Vitest tests: board/deeds, management, debt/jail, setup, mixed agents, winner, promotion, dashboards
+python -m pytest             # 125 tests: rules, auctions, trading, player counts, fuzz, API, mixed agents, runs, promotion, analysis
+npm --prefix web test        # 36 Vitest tests: board/deeds, auctions, trading, management, debt/jail, setup, mixed agents, winner, promotion, dashboards
 npm --prefix web run build   # TypeScript project build + production bundle
 ```
 
@@ -40,8 +40,10 @@ Install dev dependencies first with `python -m pip install -r requirements-dev.t
 
 - **2–6 players** with a setup dialog on a fresh game and on every New Game. Choose all-human hot-seat or a mixed game with one or more random-agent seats; mixed games need at least one human. Each player has a unique token and color.
 - **Token ownership**: owned squares show the owner's token badge and an owner-color outline; houses, hotels, and mortgage markers are always visible.
-- **Full manual play**: roll, doubles, jail, cards, purchase decisions, even building, mortgage/unmortgage, manual debt settlement, bankruptcy, winner.
-- **Mixed play**: remaining seats are random legal-action agents, marked **BOT**; the server applies one agent action at a time and human controls lock during agent decisions.
+- **Full manual play**: roll, doubles, jail, cards, purchase decisions, auctions, player trading, even building, mortgage/unmortgage, manual debt settlement, bankruptcy, winner.
+- **Auctions**: declining a purchase, being unable to afford it, or sending a bankrupt player's deeds to the bank starts an English auction. Bids are whole price steps (10% of list), can jump multiple steps, are capped by cash, and pass permanently; the last active bidder wins or the bank keeps the deed. Multiple bank auctions run one deed at a time.
+- **Player trading**: propose cash, owned deeds, and Get Out of Jail Free cards in either direction. Mortgaged deeds and color groups with buildings are blocked, offers must contain something, and the recipient accepts or rejects without counteroffers. Trading is available while rolling, managing, or deciding in Jail.
+- **Mixed play**: remaining seats are random legal-action agents, marked **BOT**; the server applies one agent action at a time and human controls lock during agent decisions. Agents bid in auctions and accept or reject trade offers but never initiate trades.
 - **Title deeds and clear management**: click any property for its rent schedule, see grouped holdings, bank house/hotel stock, and the reason a build, sale, or mortgage is disabled.
 - **Dismissible result**: after a win, stay on the board or browse Runs/Analysis without starting a new game.
 - **Promoted games**: finished games can be promoted from the winner dialog or replay page. Promoted games are stored on disk and are the only games shown in Analysis.
@@ -56,7 +58,7 @@ Install dev dependencies first with `python -m pip install -r requirements-dev.t
 | `src/board.py` | 40-square standard US board: names, color groups, prices, rent tables, house costs, mortgages |
 | `src/state.py` | `GameState` + `Player`, 6 tokens/colors, `MIN_PLAYERS`/`MAX_PLAYERS` |
 | `src/cards.py` | 16 Chance + 16 Community Chest cards as declarative effects |
-| `src/rules.py` | `Game` turn state machine, player-count validation, rent, cards, building, mortgage, manual debt, bankruptcy, winner |
+| `src/rules.py` | `Game` turn state machine, player-count validation, rent, cards, building, mortgage, auctions, trading, manual debt, bankruptcy, winner |
 | `src/trace.py` | Thread-safe `Run`/`RunStore`: initial state, per-action state snapshots, summaries, 30-run cap, durable promoted JSON |
 | `src/agents.py` | Greedy/random policies over the same decision interface; synchronous `simulate()` |
 | `src/analysis.py` | Per-game dashboard reports plus the legacy dice-only transition matrix, stationary distribution, and hitting times |
@@ -64,7 +66,7 @@ Install dev dependencies first with `python -m pip install -r requirements-dev.t
 | `src/server.py` | Uvicorn entry point (`api:app`, 127.0.0.1:8000) |
 | `web/src` | React 19 SPA: board, setup dialog, play/runs/replay/analysis pages, typed API client |
 | `web/src/components/Board.tsx` | 11×11 CSS-grid board, path animations, dice animation, token layer, owner/house/mortgage markers, deed targets |
-| `tests/` | `conftest.py`, `test_rules.py`, `test_fuzz.py`, `test_api.py`, `test_agents.py`, `test_trace.py`, `test_analysis.py` |
+| `tests/` | `conftest.py`, `test_rules.py`, `test_auctions.py`, `test_trading.py`, `test_fuzz.py`, `test_api.py`, `test_agents.py`, `test_trace.py`, `test_analysis.py` |
 | `notebooks/` | Reserved for marimo deep-dives (install `marimo` separately) |
 
 ## Turn state machine
@@ -73,14 +75,16 @@ Install dev dependencies first with `python -m pip install -r requirements-dev.t
 
 | Phase | Meaning | Exit actions |
 |-------|---------|--------------|
-| `await_roll` | current player must roll (manage actions also allowed) | `roll` |
-| `await_jail` | player in jail must choose (manage actions also allowed) | `jail_pay`, `jail_card`, `jail_roll` |
-| `await_buy` | landed on an unowned, affordable property | `buy`, `skip` |
+| `await_roll` | current player must roll (manage and trade actions also allowed) | `roll`, `trade_propose` |
+| `await_jail` | player in jail must choose (manage and trade actions also allowed) | `jail_pay`, `jail_card`, `jail_roll`, `trade_propose` |
+| `await_buy` | landed on an unowned, affordable property | `buy`, `skip` (skip starts an auction) |
+| `await_auction` | deed is up for auction | `auction_bid`, `auction_pass` |
+| `await_trade` | recipient is reviewing an offer | `trade_accept`, `trade_reject` |
 | `await_debt` | player cannot cover a payment | `sell_house`, `mortgage`, `pay_debt`, `declare_bankruptcy` |
-| `await_manage` | post-move development window | `build`, `sell_house`, `mortgage`, `unmortgage`, `end_turn` |
+| `await_manage` | post-move development window | `build`, `sell_house`, `mortgage`, `unmortgage`, `trade_propose`, `end_turn` |
 | `game_over` | one player left | `new_game` |
 
-Doubles grant another roll; three consecutive doubles send the player to jail. `pending` carries `type`, `player`, `prompt`, and legal `options`, so the UI and agents resolve the same decision points.
+Doubles grant another roll; three consecutive doubles send the player to jail. `pending` carries `type`, `player`, `prompt`, and legal `options`, so the UI and agents resolve the same decision points. An auction pending also carries `idx`, `price`, `unit`, `participants`, `passed`, `high_bid`, `high_bidder`, `min_bid`, `max_bid`, and resume context; a trade pending carries `proposer`, `recipient`, `give`, `want`, and `resume_phase`. The trade recipient is the decision actor while the proposer remains `current`.
 
 ## HTTP API
 
@@ -100,7 +104,7 @@ Doubles grant another roll; three consecutive doubles send the player to jail. `
 | `GET /api/analysis/games/{id}` | Per-game dashboard report |
 | `GET /api/analysis/overview` | Legacy dice-only Markov data: labels, 40×40 matrix, stationary π, hitting times |
 
-Manual actions include `roll`, `buy`/`skip`, `jail_pay`/`jail_card`/`jail_roll`, `build`/`sell_house`, `mortgage`/`unmortgage`, `pay_debt`/`declare_bankruptcy`, `end_turn`, and `new_game` (payload `{"n_players": 2..6, "agent_seats": [...]}`). `agent_seats` holds zero-based agent seat indices and defaults to `[]` for hot-seat.
+Manual actions include `roll`, `buy`/`skip`, `auction_bid`/`auction_pass`, `trade_propose`/`trade_accept`/`trade_reject`, `jail_pay`/`jail_card`/`jail_roll`, `build`/`sell_house`, `mortgage`/`unmortgage`, `pay_debt`/`declare_bankruptcy`, `end_turn`, and `new_game` (payload `{"n_players": 2..6, "agent_seats": [...]}`). `agent_seats` holds zero-based agent seat indices and defaults to `[]` for hot-seat. Auction bids use `{"amount": <total price>}`; trade proposals use `{"recipient": <pid>, "give": {"cash": 0, "properties": [], "goojf": 0}, "want": {...}}`.
 
 State is a plain dict (`Game.public_state()`), deep-copied under the engine lock. It also exposes `mode` (`manual`/`mixed`), `agent_seats`, `policy`, and `promoted`. `anim` reports the moving player's path.
 
@@ -108,7 +112,7 @@ State is a plain dict (`Game.public_state()`), deep-copied under the engine lock
 
 Every manual or mixed action after the active run is created appends a trace step containing the actor, phase before the action, pending decision, resulting state, events, animation payload, and source metadata. Starting a new game starts a new run while keeping the previous one in history.
 
-In mixed games, `POST /api/agent-step` applies one randomly chosen legal action for the current agent seat, including non-current debtors. Agent steps are recorded with `{"source": "agent", "policy": "random"}`; human steps in mixed runs use `{"source": "human"}`. Human actions are rejected while an agent owns the current decision.
+In mixed games, `POST /api/agent-step` applies one randomly chosen legal action for the current agent seat, including non-current debtors, auction bidders, and trade recipients. Agent steps are recorded with `{"source": "agent", "policy": "random"}`; human steps in mixed runs use `{"source": "human"}`. Human actions are rejected while an agent owns the current decision. Random agents bid valid auction amounts and accept or reject trade offers, but never propose trades.
 
 `POST /api/runs` executes a synchronous all-agent policy game and stores it in the same history. The frontend's **Runs** page launches runs and links to a replay view with an action timeline, decision inspector, and compact state inspector. The SSE endpoint is available for live consumers even though agent runs currently finish before the response returns.
 
@@ -131,12 +135,14 @@ The `/api/analysis/overview` endpoint computes the dice-only 40×40 Markov chain
 - All 32 cards: advances, nearest utility/railroad, back-3, money, pay/collect each player, repairs, GOOJF (held, returned to deck on use)
 - Even build/sell across color groups, 32-house/12-hotel bank limits and live bank inventory, group full + unmortgaged requirement, four bank houses required to break a hotel
 - Mortgage rules (no buildings in group; cost + 10% to lift)
+- Auctions: 10% price steps, whole-step bids capped by cash, permanent passes, auto-pass when the next minimum exceeds cash, last active bidder wins, no-bid deeds stay with the bank, auctions resume the prior phase; bank auctions of bankrupt players' deeds run one at a time
+- Trading: cash/deeds/GOOJF in either direction, no empty or self trades, no duplicate deeds, mortgaged deeds blocked, color groups with buildings blocked, recipient-only accept/reject, no counteroffers; trades resume rolling/managing/Jail correctly
 - Manual debt settlement: sell buildings or mortgage assets in any order, then pay the full amount; spending is blocked while in debt; declare bankruptcy if assets cannot cover it; asset transfer to creditor or bank; turn skip; last player standing wins
 - Server-side validation of every action; illegal actions leave state untouched
 
 ## Deliberate omissions
 
-Auctions, trading, house-shortage auctions, Free Parking pot, Income Tax 10% option, and bank-auction of bankrupt properties are not implemented.
+House-shortage auctions, the Free Parking pot, the Income Tax 10% option, trade counteroffers, and auctions of buildings are not implemented. Bank auctions of bankrupt players' deeds are implemented.
 
 ## Use the engine without the UI
 

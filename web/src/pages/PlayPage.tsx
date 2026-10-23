@@ -4,6 +4,7 @@ import { api } from "../api";
 import { Board } from "../components/Board";
 import {
   AgentTurnPanel,
+  AuctionPanel,
   DebtPanel,
   DecisionModal,
   EventLog,
@@ -14,7 +15,13 @@ import {
   WinnerOverlay,
 } from "../components/GamePanels";
 import { SetupDialog } from "../components/SetupDialog";
-import { isAgentDecision, isFreshGame, managingPid } from "../board";
+import { TradeDialog } from "../components/TradeDialog";
+import {
+  canProposeTrade,
+  isAgentDecision,
+  isFreshGame,
+  managingPid,
+} from "../board";
 import { useGame } from "../hooks";
 import type { GameSetup } from "../types";
 
@@ -28,6 +35,7 @@ export function PlayPage() {
   const [promotionError, setPromotionError] = useState<string | null>(null);
   const [promotedRunId, setPromotedRunId] = useState<string | null>(null);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  const [tradeOpen, setTradeOpen] = useState(false);
   const [rolling, setRolling] = useState(false);
   const [agentPaused, setAgentPaused] = useState(false);
   const [allowCancel, setAllowCancel] = useState(false);
@@ -41,6 +49,10 @@ export function PlayPage() {
     setAllowCancel(false);
     setSetupOpen(true);
   }, [state]);
+
+  useEffect(() => {
+    setTradeOpen(false);
+  }, [state?.run_id]);
 
   useEffect(() => {
     if (!state) return;
@@ -83,6 +95,7 @@ export function PlayPage() {
       sessionStorage.getItem(`monopoly:winner-dismissed:${winnerKey}`) ===
         "1");
   const manager = state.players[managingPid(state)];
+  const canTrade = canProposeTrade(state);
   const promoted = Boolean(
     state.promoted ||
       (state.run_id !== undefined && promotedRunId === state.run_id),
@@ -158,11 +171,26 @@ export function PlayPage() {
         {!agentActing && (
           <DebtPanel state={state} busy={busy} onAction={onAction} />
         )}
+        {!agentActing && (
+          <AuctionPanel state={state} busy={busy} onAction={onAction} />
+        )}
         <div className="panel">
           <div className="panel-head">
             <h2>
               Manage {"\u2014"} {manager.glyph} {manager.name}
             </h2>
+            <button
+              className="mbtn"
+              disabled={!canTrade || busy || agentActing}
+              title={
+                canTrade
+                  ? "Propose a trade"
+                  : "Trading is not available right now"
+              }
+              onClick={() => setTradeOpen(true)}
+            >
+              Trade
+            </button>
           </div>
           <ManagePanel
             state={state}
@@ -180,6 +208,15 @@ export function PlayPage() {
 
       {!agentActing && (
         <DecisionModal state={state} busy={busy} onAction={onAction} />
+      )}
+      {!agentActing && (
+        <TradeDialog
+          state={state}
+          busy={busy}
+          open={tradeOpen}
+          onClose={() => setTradeOpen(false)}
+          onAction={onAction}
+        />
       )}
       <PropertyDeed
         state={state}

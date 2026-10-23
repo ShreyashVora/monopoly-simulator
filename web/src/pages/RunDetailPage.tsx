@@ -219,6 +219,14 @@ export function RunDetailPage() {
                   </dd>
                   <dt>Action</dt>
                   <dd>{current.action}</dd>
+                  {Object.keys(current.payload).length > 0 && (
+                    <>
+                      <dt>Payload</dt>
+                      <dd className="trace-payload">
+                        {JSON.stringify(current.payload)}
+                      </dd>
+                    </>
+                  )}
                   <dt>Phase before</dt>
                   <dd>{current.phase_before}</dd>
                   <dt>Policy</dt>
