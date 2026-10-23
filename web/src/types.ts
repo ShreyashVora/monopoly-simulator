@@ -2,6 +2,8 @@ export type Phase =
   | "await_roll"
   | "await_jail"
   | "await_buy"
+  | "await_auction"
+  | "await_trade"
   | "await_debt"
   | "await_manage"
   | "game_over";
@@ -38,6 +40,12 @@ export interface DecisionOption {
   payload: Record<string, unknown>;
 }
 
+export interface TradeTerms {
+  cash: number;
+  properties: number[];
+  goojf: number;
+}
+
 export interface PendingDecision {
   type: string;
   player: number;
@@ -45,11 +53,25 @@ export interface PendingDecision {
   options: DecisionOption[];
   idx?: number;
   price?: number;
-  then?: string;
+  then?: string | null;
   amount?: number;
   creditor?: number | null;
   creditors?: Array<{ player: number; amount: number }>;
   reason?: string;
+  unit?: number;
+  participants?: number[];
+  passed?: number[];
+  active?: number[];
+  high_bid?: number | null;
+  high_bidder?: number | null;
+  min_bid?: number;
+  max_bid?: number;
+  bank?: boolean;
+  proposer?: number;
+  recipient?: number;
+  give?: TradeTerms;
+  want?: TradeTerms;
+  resume_phase?: Phase;
 }
 
 export interface GameState {

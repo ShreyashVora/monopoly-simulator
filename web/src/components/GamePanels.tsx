@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   bankHotels,
   bankHouses,
@@ -264,6 +265,125 @@ export function DecisionModal({
   );
 }
 
+export function AuctionPanel({
+  state,
+  busy,
+  onAction,
+}: {
+  state: GameState;
+  busy: boolean;
+  onAction: (type: string, payload: Record<string, unknown>) => void;
+}) {
+  const pending = state.pending;
+  const isAuction =
+    state.phase === "await_auction" &&
+    pending?.type === "auction" &&
+    state.winner === null;
+  const unit = pending?.unit ?? 10;
+  const minBid = pending?.min_bid ?? unit;
+  const [amount, setAmount] = useState<number | "">(minBid);
+
+  useEffect(() => {
+    if (isAuction) setAmount(minBid);
+  }, [isAuction, minBid, pending?.idx, pending?.player]);
+
+  if (!isAuction || !pending) return null;
+
+  const idx = pending.idx ?? 0;
+  const sq = state.squares[idx];
+  const p = state.players[pending.player];
+  const maxBid = pending.max_bid ?? Math.floor(p.cash / unit) * unit;
+  const numeric = typeof amount === "number" ? amount : Number.NaN;
+  const valid =
+    Number.isInteger(numeric) &&
+    numeric >= minBid &&
+    numeric <= p.cash &&
+    numeric % unit === 0;
+  const highBidder =
+    pending.high_bidder == null ? null : state.players[pending.high_bidder];
+  const active = pending.active ?? pending.participants ?? [];
+  const passed = pending.passed ?? [];
+
+  return (
+    <div className="panel action-panel auction-panel">
+      <div className="panel-head">
+        <h2>Auction</h2>
+        {pending.bank && <span className="auction-badge">BANK</span>}
+      </div>
+      <div
+        className="auction-deed"
+        style={{ borderLeftColor: FILL[sq.group ?? ""] ?? "#999" }}
+      >
+        <div className="auction-name">{sq.name}</div>
+        <div className="auction-meta">
+          List ${pending.price ?? sq.price ?? 0} · bids in ${unit} units
+        </div>
+      </div>
+      <div className="auction-high">
+        {pending.high_bid == null
+          ? "No bids yet"
+          : `High bid $${pending.high_bid} — ${highBidder?.name ?? "unknown"}`}
+      </div>
+      <div className="action-prompt">
+        {p.glyph} {p.name} — cash ${p.cash}
+      </div>
+      <label className="auction-bid-label">
+        Your bid
+        <input
+          className="auction-bid-input"
+          type="number"
+          min={minBid}
+          max={maxBid}
+          step={unit}
+          value={amount}
+          disabled={busy || maxBid < minBid}
+          aria-label={`Bid on ${sq.name}`}
+          onChange={(e) =>
+            setAmount(e.target.value === "" ? "" : Number(e.target.value))
+          }
+        />
+      </label>
+      <div className="auction-range">
+        Minimum ${minBid} · Maximum ${maxBid}
+      </div>
+      {amount !== "" && !valid && (
+        <div className="auction-error">
+          Enter a whole multiple of ${unit} within your cash.
+        </div>
+      )}
+      <button
+        className="wide-btn auction-bid-btn"
+        disabled={busy || !valid}
+        onClick={() => onAction("auction_bid", { amount: numeric })}
+      >
+        Bid ${Number.isFinite(numeric) ? numeric : minBid}
+      </button>
+      <button
+        className="wide-btn auction-pass-btn"
+        disabled={busy}
+        onClick={() => onAction("auction_pass", {})}
+      >
+        Pass
+      </button>
+      <div className="auction-players">
+        <span>
+          <b>In:</b>{" "}
+          {active.map((pid) => state.players[pid].name).join(", ") || "—"}
+        </span>
+        {passed.length > 0 && (
+          <span>
+            <b>Out:</b>{" "}
+            {passed.map((pid) => state.players[pid].name).join(", ")}
+          </span>
+        )}
+      </div>
+      <div className="action-note">
+        Bids are total prices. Passing is permanent for this auction.
+      </div>
+    </div>
+  );
+}
+
 export function JailPanel({
   state,
   busy,
@@ -318,7 +438,11 @@ export function AgentTurnPanel({
   let detail = "Choosing a move.";
   if (pend?.type === "debt") detail = `Settling a $${pend.amount ?? 0} debt.`;
   else if (pend?.type === "buy") detail = "Deciding whether to buy property.";
-  else if (pend?.type === "jail") detail = "Choosing a Jail action.";
+  else if (pend?.type === "auction") {
+    detail = `Bidding on ${state.squares[pend.idx ?? 0].name}.`;
+  } else if (pend?.type === "trade") {
+    detail = "Reviewing a trade offer.";
+  } else if (pend?.type === "jail") detail = "Choosing a Jail action.";
   else if (state.phase === "await_roll") detail = "Rolling the dice.";
   else if (state.phase === "await_manage") {
     detail = "Managing property or ending the turn.";

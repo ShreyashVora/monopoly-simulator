@@ -129,6 +129,29 @@ describe("setup flow", () => {
     expect(screen.queryByText("Random Agent")).not.toBeInTheDocument();
   });
 
+  it("opens the trade composer from the Manage panel", async () => {
+    const inProgress = {
+      ...structuredClone(four),
+      turn: 5,
+      log: ["New game", "Player 1 rolls"],
+    };
+    vi.mocked(api.state).mockResolvedValue(inProgress);
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter initialEntries={["/play"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Trade" }));
+    expect(
+      screen.getByRole("dialog", { name: "Propose a trade" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("You give")).toBeInTheDocument();
+    expect(screen.getByText("You receive")).toBeInTheDocument();
+  });
+
   it("resumes an in-progress game without reopening setup", async () => {
     const inProgress = {
       ...structuredClone(four),

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import state2 from "../test/state2.json";
 import type { GameState } from "../types";
 import {
+  AuctionPanel,
   DebtPanel,
   DecisionModal,
   JailPanel,
@@ -210,6 +211,39 @@ describe("decision panels", () => {
     const s = debtState();
     render(<DecisionModal state={s} busy={false} onAction={vi.fn()} />);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("collects a valid auction bid and can pass", async () => {
+    const onAction = vi.fn();
+    const user = userEvent.setup();
+    const s = structuredClone(base);
+    s.phase = "await_auction";
+    s.current = 0;
+    s.pending = {
+      type: "auction",
+      player: 0,
+      idx: 3,
+      price: 60,
+      unit: 6,
+      min_bid: 6,
+      max_bid: 1500,
+      high_bid: null,
+      high_bidder: null,
+      participants: [0, 1],
+      active: [0, 1],
+      passed: [],
+      prompt: "Player 1 to bid on Baltic Avenue.",
+      options: [],
+    };
+    render(<AuctionPanel state={s} busy={false} onAction={onAction} />);
+    expect(screen.getByText("Baltic Avenue")).toBeInTheDocument();
+    expect(screen.getByText("No bids yet")).toBeInTheDocument();
+    expect(screen.getByRole("spinbutton")).toHaveValue(6);
+    await user.click(screen.getByRole("button", { name: "Bid $6" }));
+    expect(onAction).toHaveBeenCalledWith("auction_bid", { amount: 6 });
+
+    await user.click(screen.getByRole("button", { name: "Pass" }));
+    expect(onAction).toHaveBeenCalledWith("auction_pass", {});
   });
 });
 
