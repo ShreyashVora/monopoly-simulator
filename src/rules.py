@@ -13,24 +13,33 @@ from copy import deepcopy
 
 import cards
 from board import GROUP_MEMBERS, HOTEL_LIMIT, HOUSE_LIMIT, SQUARES
-from state import (GO_TO_JAIL_POS, JAIL_FINE, JAIL_POS, PASS_GO_BONUS,
-                   GameState)
+from state import (GO_TO_JAIL_POS, JAIL_FINE, JAIL_POS, MAX_PLAYERS,
+                   MIN_PLAYERS, PASS_GO_BONUS, GameState)
 
 
 class RuleError(Exception):
     pass
 
 
+def validate_player_count(n_players):
+    if (isinstance(n_players, bool) or not isinstance(n_players, int)
+            or not MIN_PLAYERS <= n_players <= MAX_PLAYERS):
+        raise RuleError(
+            f"Player count must be between {MIN_PLAYERS} and {MAX_PLAYERS}.")
+
+
 class Game:
-    def __init__(self, seed=None):
+    def __init__(self, seed=None, n_players=4):
+        validate_player_count(n_players)
         self._rng = random.Random(seed)
         self._lock = threading.RLock()
         self.forced_dice = None
+        self.n_players = n_players
         self._reset()
 
     # ------------------------------------------------------------------ reset
     def _reset(self):
-        self.s = GameState()
+        self.s = GameState(self.n_players)
         self.s.chance_deck = [c["id"] for c in cards.CHANCE]
         self.s.chest_deck = [c["id"] for c in cards.CHEST]
         self._rng.shuffle(self.s.chance_deck)
@@ -38,12 +47,22 @@ class Game:
         self._events = []
         self._stop = False
         self._then = "await_manage"
-        self._log("New game — 4 players, $1500 each. Player 1 to roll.")
+        self._payments = []
+        self._payment_done = None
+        self._log(f"New game — {self.n_players} players, $1500 each. "
+                  "Player 1 to roll.")
 
     # -------------------------------------------------------------- utilities
     @property
     def current_player(self):
         return self.s.players[self.s.current]
+
+    def decision_actor(self):
+        pend = self.s.pending
+        if (self.s.phase == "await_debt" and pend
+                and pend.get("type") == "debt"):
+            return pend["player"]
+        return self.s.current
 
     def _log(self, msg):
         self._events.append(msg)
@@ -133,11 +152,13 @@ class Game:
 
     def _send_to_jail(self, pid):
         p = self.s.players[pid]
+        start = p.pos
         p.pos = JAIL_POS
         p.in_jail = True
         p.jail_rolls = 0
         self.s.doubles = 0
-        self.s.anim = {"mover": pid, "path": [GO_TO_JAIL_POS, JAIL_POS]}
+        path = [start, JAIL_POS] if start != JAIL_POS else [JAIL_POS]
+        self.s.anim = {"mover": pid, "path": path}
         self._log(f"{p.name} goes to Jail.")
 
     # ------------------------------------------------------------- resolution
@@ -178,11 +199,11 @@ class Game:
                 rent = self._rent(p.pos, rent_mode)
                 self._log(f"{p.name} pays ${rent} rent to "
                           f"{self.s.players[owner].name}.")
-                self._pay(pid, rent, owner)
+                self._pay(pid, rent, owner, reason=f"rent on {sq['name']}")
                 return
         elif t == "tax":
             self._log(f"{p.name} pays ${sq['amount']} {sq['short']}.")
-            self._pay(pid, sq["amount"], None)
+            self._pay(pid, sq["amount"], None, reason=sq["name"])
         elif t == "go_to_jail":
             self._send_to_jail(pid)
         elif t == "chance":
@@ -203,16 +224,14 @@ class Game:
             return base
         if sq["type"] == "railroad":
             count = sum(1 for i, sq2 in enumerate(SQUARES)
-                        if sq2["type"] == "railroad" and self.s.owner[i] == owner
-                        and not self.s.mortgaged[i])
+                        if sq2["type"] == "railroad" and self.s.owner[i] == owner)
             rent = sq["rents"][max(0, count - 1)]
             return rent * 2 if rent_mode == "rr_double" else rent
         if sq["type"] == "utility":
             if rent_mode == "utility_ten":
                 return 10 * sum(self.s.last_dice or (7,))
             count = sum(1 for i, sq2 in enumerate(SQUARES)
-                        if sq2["type"] == "utility" and self.s.owner[i] == owner
-                        and not self.s.mortgaged[i])
+                        if sq2["type"] == "utility" and self.s.owner[i] == owner)
             mult = 10 if count >= 2 else 4
             return mult * sum(self.s.last_dice or (7,))
         return 0
@@ -239,7 +258,7 @@ class Game:
             if amt >= 0:
                 p.cash += amt
             else:
-                self._pay(pid, -amt, None)
+                self._pay(pid, -amt, None, reason="card")
         elif eff == "move_to":
             self._advance_to(pid, card["pos"])
             self._resolve_landing(pid)
@@ -261,17 +280,24 @@ class Game:
             owed = houses * card["house"] + hotels * card["hotel"]
             self._log(f"Repairs: {houses} houses, {hotels} hotels — ${owed}.")
             if owed:
-                self._pay(pid, owed, None)
+                self._pay(pid, owed, None, reason="repairs")
         elif eff == "pay_each":
-            for other in list(self.s.players):
-                if other.pid != pid and not other.bankrupt:
-                    self._pay(pid, card["amount"], other.pid)
-            self._log(f"{p.name} pays each player ${card['amount']}.")
+            others = [o for o in self.s.players
+                      if o.pid != pid and not o.bankrupt]
+            amount = card["amount"] * len(others)
+            creditors = [(o.pid, card["amount"]) for o in others]
+            self._log(f"{p.name} owes each player ${card['amount']}.")
+            if amount:
+                self._queue_payments(
+                    [(pid, amount, creditors, "card")])
         elif eff == "collect_each":
-            for other in list(self.s.players):
-                if other.pid != pid and not other.bankrupt:
-                    self._pay(other.pid, card["amount"], pid)
+            payments = [
+                (other.pid, card["amount"], [(pid, card["amount"])], "card")
+                for other in self.s.players
+                if other.pid != pid and not other.bankrupt
+            ]
             self._log(f"{p.name} collects ${card['amount']} from each player.")
+            self._queue_payments(payments)
 
     def _nearest(self, pid, what):
         pos = self.s.players[pid].pos
@@ -285,52 +311,148 @@ class Game:
     def _sell_house_value(self, idx):
         return SQUARES[idx]["house_cost"] // 2
 
-    def _liquidate(self, pid, need):
-        p = self.s.players[pid]
-        for idx in range(40):
-            if self.s.owner[idx] != pid:
+    def _bank_count(self, kind):
+        if kind == "house":
+            return HOUSE_LIMIT - sum(min(h, 4) for h in self.s.houses)
+        return HOTEL_LIMIT - sum(1 for h in self.s.houses if h == 5)
+
+    def _creditor_label(self, creditors):
+        if not creditors:
+            return "the bank"
+        names = [self.s.players[pid].name for pid, _ in creditors]
+        return " and ".join(names)
+
+    def _pay(self, pid, amount, creditor=None, reason="payment", done=None):
+        if amount <= 0:
+            if done is not None:
+                done()
+            return
+        creditors = [] if creditor is None else [(creditor, amount)]
+        self._queue_payments([(pid, amount, creditors, reason)], done)
+
+    def _queue_payments(self, payments, done=None):
+        if not payments:
+            if done is not None:
+                done()
+            return
+        self._payments = list(payments)
+        self._payment_done = done
+        self._process_payments()
+
+    def _process_payments(self):
+        while self._payments:
+            payer, amount, creditors, reason = self._payments[0]
+            p = self.s.players[payer]
+            if p.bankrupt:
+                self._payments.pop(0)
                 continue
-            while self.s.houses[idx] > 0 and p.cash < need:
-                self.s.houses[idx] -= 1
-                p.cash += self._sell_house_value(idx)
-                self._log(f"Liquidated: sold a building on {SQUARES[idx]['name']}.")
-        for idx in range(40):
-            if p.cash >= need:
-                break
-            if (self.s.owner[idx] == pid and not self.s.mortgaged[idx]
-                    and SQUARES[idx]["type"] in ("street", "railroad", "utility")):
-                self.s.mortgaged[idx] = True
-                p.cash += SQUARES[idx]["mortgage"]
-                self._log(f"Liquidated: mortgaged {SQUARES[idx]['name']}.")
-
-    def _pay(self, pid, amount, creditor=None):
-        if amount <= 0 or self._stop:
-            return
-        p = self.s.players[pid]
-        if p.cash < amount:
-            self._liquidate(pid, amount)
-        if p.cash >= amount:
+            if p.cash < amount:
+                self._start_debt(payer, amount, creditors, reason)
+                return
             p.cash -= amount
-            if creditor is not None:
-                self.s.players[creditor].cash += amount
-            return
-        self._bankrupt(pid, creditor)
+            for cid, share in creditors:
+                if cid is not None and not self.s.players[cid].bankrupt:
+                    self.s.players[cid].cash += share
+            self._payments.pop(0)
+            self._log(f"{p.name} pays ${amount} to "
+                      f"{self._creditor_label(creditors)}.")
+        self.s.pending = None
+        if self._payment_done is not None:
+            done = self._payment_done
+            self._payment_done = None
+            done()
+        else:
+            self.s.phase = self._then
 
-    def _bankrupt(self, pid, creditor):
+    def _start_debt(self, pid, amount, creditors, reason):
+        p = self.s.players[pid]
+        self.s.phase = "await_debt"
+        self.s.pending = {
+            "type": "debt",
+            "player": pid,
+            "amount": amount,
+            "creditor": creditors[0][0] if len(creditors) == 1 else None,
+            "creditors": [{"player": cid, "amount": share}
+                          for cid, share in creditors],
+            "reason": reason,
+            "prompt": (f"{p.name} owes ${amount} to "
+                       f"{self._creditor_label(creditors)} ({reason}). "
+                       "Sell buildings or mortgage property, then pay."),
+            "options": [
+                {"action": "pay_debt", "label": f"Pay ${amount}",
+                 "payload": {}},
+                {"action": "declare_bankruptcy",
+                 "label": "Declare bankruptcy", "payload": {}},
+            ],
+        }
+        self._log(f"{p.name} must raise ${amount} for {reason}.")
+
+    def a_pay_debt(self, payload):
+        pend = self.s.pending
+        if self.s.phase != "await_debt" or not pend or pend["type"] != "debt":
+            raise RuleError("No debt to pay.")
+        pid = pend["player"]
+        p = self.s.players[pid]
+        amount = pend["amount"]
+        if p.cash < amount:
+            raise RuleError(
+                f"Raise ${amount - p.cash} more before paying the debt.")
+        p.cash -= amount
+        for entry in pend["creditors"]:
+            cid = entry["player"]
+            if not self.s.players[cid].bankrupt:
+                self.s.players[cid].cash += entry["amount"]
+        self._log(f"{p.name} pays ${amount} to "
+                  f"{self._creditor_label([(e['player'], e['amount']) for e in pend['creditors']])}.")
+        self._payments.pop(0)
+        self.s.pending = None
+        self._process_payments()
+
+    def a_declare_bankruptcy(self, payload):
+        pend = self.s.pending
+        if self.s.phase != "await_debt" or not pend or pend["type"] != "debt":
+            raise RuleError("No debt to settle.")
+        pid = pend["player"]
+        was_current = self.s.current == pid
+        creditors = [(e["player"], e["amount"]) for e in pend["creditors"]]
+        self._payments.pop(0)
+        self.s.pending = None
+        self._bankrupt(pid, creditors)
+        if self.s.winner is not None or was_current:
+            self._payments = []
+            self._payment_done = None
+            return
+        self._stop = False
+        self._process_payments()
+
+    def _bankrupt(self, pid, creditors=None):
+        creditors = list(creditors or [])
         p = self.s.players[pid]
         self._log(f"{p.name} is bankrupt!")
-        if creditor is not None:
-            c = self.s.players[creditor]
+        if len(creditors) == 1:
+            cid = creditors[0][0]
+            c = self.s.players[cid]
             c.cash += p.cash
             for idx in range(40):
                 if self.s.owner[idx] == pid:
-                    self.s.owner[idx] = creditor
+                    self.s.owner[idx] = cid
             c.goojf.extend(p.goojf)
         else:
+            if creditors:
+                owed = sum(amount for _, amount in creditors)
+                remaining = p.cash
+                for cid, amount in creditors:
+                    share = int(p.cash * amount / owed)
+                    self.s.players[cid].cash += share
+                    remaining -= share
+                if creditors and remaining:
+                    self.s.players[creditors[0][0]].cash += remaining
+                self.s.players[creditors[0][0]].goojf.extend(p.goojf)
             for idx in range(40):
                 if self.s.owner[idx] == pid:
                     self.s.owner[idx] = None
                     self.s.mortgaged[idx] = False
+                    self.s.houses[idx] = 0
         p.cash = 0
         p.goojf = []
         p.bankrupt = True
@@ -340,15 +462,21 @@ class Game:
             self._advance_turn()
 
     # ----------------------------------------------------------------- actions
-    def _require_turn(self):
+    def _asset_actor(self):
+        pend = self.s.pending
+        if (self.s.phase == "await_debt" and pend
+                and pend.get("type") == "debt"):
+            return pend["player"]
+        return self.s.current
+
+    def _require_property_action(self, allow_spending=True):
         if self.s.winner is not None:
             raise RuleError("The game is over.")
-        if self.s.phase == "await_buy":
-            raise RuleError("Resolve the property purchase first.")
-        if self.s.phase == "await_jail":
-            raise RuleError("Resolve the jail decision first.")
-        if self.s.phase not in ("await_roll", "await_manage"):
-            raise RuleError("No action available right now.")
+        if self.s.phase not in ("await_roll", "await_manage",
+                               "await_jail", "await_debt"):
+            raise RuleError("No property action available right now.")
+        if not allow_spending and self.s.phase == "await_debt":
+            raise RuleError("You cannot spend cash while settling a debt.")
 
     def a_roll(self, payload):
         if self.s.phase != "await_roll":
@@ -381,19 +509,36 @@ class Game:
             return
         self.s.phase = self._then
 
+    def _release_from_jail(self, pid):
+        p = self.s.players[pid]
+        p.in_jail = False
+        p.jail_rolls = 0
+        self.s.pending = None
+        self.s.phase = "await_roll"
+
+    def _leave_jail_and_move(self, pid, steps):
+        p = self.s.players[pid]
+        p.in_jail = False
+        p.jail_rolls = 0
+        self.s.pending = None
+        self._move_by(pid, steps)
+        self._resolve_landing(pid)
+        if self._stop or self.s.pending is not None:
+            return
+        if p.in_jail:
+            self._advance_turn()
+            return
+        self.s.phase = self._then
+
     def a_jail_pay(self, payload):
         if self.s.phase != "await_jail":
             raise RuleError("Not in a jail decision.")
         pid = self.s.current
         p = self.s.players[pid]
         self._log(f"{p.name} pays ${JAIL_FINE} to get out of Jail.")
-        self._pay(pid, JAIL_FINE, None)
-        if self._stop:
-            return
-        p.in_jail = False
-        p.jail_rolls = 0
-        self.s.phase = "await_roll"
-        self.s.pending = None
+        self._then = "await_roll"
+        self._pay(pid, JAIL_FINE, None, reason="Jail fine",
+                  done=lambda: self._release_from_jail(pid))
 
     def a_jail_card(self, payload):
         if self.s.phase != "await_jail":
@@ -439,20 +584,9 @@ class Game:
             self._advance_turn()
             return
         self._log("Third failed attempt — must pay the $50 fine and move.")
-        self._pay(pid, JAIL_FINE, None)
-        if self._stop:
-            return
-        p.in_jail = False
-        p.jail_rolls = 0
         self._then = "await_manage"
-        self._move_by(pid, d1 + d2)
-        self._resolve_landing(pid)
-        if self._stop or self.s.pending is not None:
-            return
-        if p.in_jail:
-            self._advance_turn()
-            return
-        self.s.phase = "await_manage"
+        self._pay(pid, JAIL_FINE, None, reason="Jail fine",
+                  done=lambda: self._leave_jail_and_move(pid, d1 + d2))
 
     def a_buy(self, payload):
         pend = self.s.pending
@@ -478,13 +612,8 @@ class Game:
         self.s.phase = pend["then"]
         self.s.pending = None
 
-    def _require_manage(self):
-        self._require_turn()
-        if self.s.phase not in ("await_roll", "await_manage"):
-            raise RuleError("No action available right now.")
-
     def a_build(self, payload):
-        self._require_manage()
+        self._require_property_action(allow_spending=False)
         pid = self.s.current
         idx = payload.get("idx")
         self._validate_build(pid, idx)
@@ -524,8 +653,8 @@ class Game:
             raise RuleError("Not enough cash.")
 
     def a_sell_house(self, payload):
-        self._require_manage()
-        pid = self.s.current
+        self._require_property_action()
+        pid = self._asset_actor()
         idx = payload.get("idx")
         self._validate_sell(pid, idx)
         self.s.houses[idx] -= 1
@@ -548,10 +677,12 @@ class Game:
         max_h = max(self.s.houses[i] for i in group)
         if self.s.houses[idx] != max_h:
             raise RuleError("Sell evenly across the color group.")
+        if self.s.houses[idx] == 5 and self._bank_count("house") < 4:
+            raise RuleError("Not enough houses in the bank to break the hotel.")
 
     def a_mortgage(self, payload):
-        self._require_manage()
-        pid = self.s.current
+        self._require_property_action()
+        pid = self._asset_actor()
         idx = payload.get("idx")
         if idx is None or not (0 <= idx < 40):
             raise RuleError("Bad square.")
@@ -570,7 +701,7 @@ class Game:
                   f"{sq['name']} (+${sq['mortgage']}).")
 
     def a_unmortgage(self, payload):
-        self._require_manage()
+        self._require_property_action(allow_spending=False)
         pid = self.s.current
         idx = payload.get("idx")
         if idx is None or not (0 <= idx < 40):
@@ -597,6 +728,9 @@ class Game:
         self._advance_turn()
 
     def a_new_game(self, payload):
+        n_players = payload.get("n_players", self.n_players)
+        validate_player_count(n_players)
+        self.n_players = n_players
         self._reset()
 
     # ------------------------------------------------------------------ public
@@ -604,6 +738,8 @@ class Game:
         with self._lock:
             d = self.s.to_dict(SQUARES)
             d["log"] = list(self.s.log)[-60:]
+            d["bank_houses"] = self._bank_count("house")
+            d["bank_hotels"] = self._bank_count("hotel")
             return deepcopy(d)
 
     def act(self, action_type, payload=None):

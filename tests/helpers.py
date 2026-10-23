@@ -27,6 +27,26 @@ def random_policy_step(game):
             game.act("jail_card")
         else:
             game.act("jail_roll")
+    elif phase == "await_debt":
+        pend = game.s.pending
+        pid = pend["player"]
+        if game.s.players[pid].cash >= pend["amount"]:
+            game.act("pay_debt")
+        else:
+            owned = [i for i in range(40) if game.s.owner[i] == pid]
+            acted = False
+            for idx in owned:
+                if game.s.houses[idx] > 0:
+                    if game.act("sell_house", {"idx": idx})["ok"]:
+                        acted = True
+                        break
+            if not acted:
+                for idx in owned:
+                    if game.act("mortgage", {"idx": idx})["ok"]:
+                        acted = True
+                        break
+            if not acted:
+                game.act("declare_bankruptcy")
     elif phase == "await_manage":
         owned = [i for i in range(40) if game.s.owner[i] == game.s.current]
         acted = False

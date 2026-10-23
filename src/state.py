@@ -6,9 +6,13 @@ GO_TO_JAIL_POS = 30
 PASS_GO_BONUS = 200
 JAIL_FINE = 50
 
-PLAYER_COLORS = ["#e63946", "#1d3557", "#2a9d8f", "#e76f51"]
+PLAYER_COLORS = ["#e63946", "#1d3557", "#2a9d8f", "#e76f51",
+                 "#7b2cbf", "#ffb703"]
 TOKENS = [("Top Hat", "\U0001F3A9"), ("Dog", "\U0001F415"),
-          ("Car", "\U0001F697"), ("Boot", "\U0001F97E")]
+          ("Car", "\U0001F697"), ("Boot", "\U0001F97E"),
+          ("Battleship", "\U0001F6A2"), ("Cat", "\U0001F408")]
+MIN_PLAYERS = 2
+MAX_PLAYERS = len(TOKENS)
 
 
 class Player:
