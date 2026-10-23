@@ -51,7 +51,7 @@ export function RunsPage() {
     <>
       <h1 className="page-title">
         Runs
-        <small>Replay manual games or launch a policy-driven agent game.</small>
+        <small>Replay completed games or launch an all-agent simulation.</small>
       </h1>
       <div className="runs-layout">
         <div className="card">
@@ -129,8 +129,13 @@ export function RunsPage() {
                     </div>
                     <div className="run-meta">
                       {r.steps} steps {"\u00b7"} {r.turns} turns {"\u00b7"}{" "}
-                      {r.policy ?? "manual"}
+                      {r.kind === "mixed"
+                        ? `${r.agent_seats?.length ?? 0} agent${
+                            (r.agent_seats?.length ?? 0) === 1 ? "" : "s"
+                          }`
+                        : r.policy ?? "manual"}
                       {r.winner !== null ? ` \u00b7 winner P${r.winner + 1}` : ""}
+                      {r.promoted ? " \u00b7 promoted" : ""}
                     </div>
                   </div>
                   <span className={`pill ${r.status}`}>{r.status}</span>

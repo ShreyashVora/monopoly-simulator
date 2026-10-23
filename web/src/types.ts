@@ -69,6 +69,15 @@ export interface GameState {
   bank_houses?: number;
   bank_hotels?: number;
   run_id?: string;
+  agent_seats?: number[];
+  mode?: "manual" | "mixed";
+  policy?: string | null;
+  promoted?: boolean;
+}
+
+export interface GameSetup {
+  n_players: number;
+  agent_seats: number[];
 }
 
 export interface Anim {
@@ -83,15 +92,18 @@ export interface ActionResult {
   events?: string[];
   anim?: Anim | null;
   run_id?: string;
+  action?: string;
 }
 
 export interface RunSummary {
   id: string;
-  kind: "manual" | "agent";
+  kind: "manual" | "agent" | "mixed";
   label: string;
   seed: number | null;
   n_players: number;
   policy: string | null;
+  agent_seats?: number[];
+  promoted: boolean;
   created_at: string;
   status: "running" | "done" | "stopped" | "error";
   winner: number | null;
@@ -127,4 +139,48 @@ export interface AnalysisOverview {
   stationary: number[];
   hittingTimes: Record<string, number[]>;
   note: string;
+}
+
+export interface GameAnalysisPlayer {
+  pid: number;
+  name: string;
+  glyph: string;
+  color: string;
+  bankrupt: boolean;
+  final_cash: number;
+  final_net_worth: number;
+  properties: number;
+  monopolies: number;
+  houses: number;
+  hotels: number;
+  mortgaged: number;
+  peak_cash: number;
+  peak_net_worth: number;
+}
+
+export interface GameAnalysisTimeline {
+  labels: string[];
+  turns: number[];
+  cash: number[][];
+  net_worth: number[][];
+  properties: number[][];
+}
+
+export interface ObservedTransitions {
+  labels: string[];
+  counts: number[][];
+  total: number;
+}
+
+export interface GameAnalysis {
+  run: RunSummary;
+  winner: number | null;
+  steps: number;
+  turns: number;
+  bankrupt_count: number;
+  players: GameAnalysisPlayer[];
+  timeline: GameAnalysisTimeline;
+  actions: Record<string, number>;
+  rolls: Record<string, number>;
+  observed_transitions: ObservedTransitions;
 }
